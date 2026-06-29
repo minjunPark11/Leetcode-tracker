@@ -1,15 +1,13 @@
-// 문제 목록: 난이도·태그·상태 필터, 검색, 정렬, 생성 모달.
+// 문제 목록: 검색·태그·정렬은 상단 바에서, 상태·난이도 필터는 좌측 사이드바(URL 쿼리)에서.
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { createProblem, useProblems } from '../hooks/useProblems'
 import { DifficultyBadge, StatusBadge, DIFFICULTY_BAR } from '../components/Badges'
 import ProblemForm from '../components/ProblemForm'
 import { toast } from '../components/Toast'
 import { PlusIcon, SearchIcon, CloseIcon, ListIcon } from '../components/icons'
 import {
-  DIFFICULTIES,
   DIFFICULTY_LABELS,
-  STATUSES,
   STATUS_LABELS,
   type Difficulty,
   type Status,
@@ -20,13 +18,16 @@ const DIFFICULTY_ORDER: Record<Difficulty, number> = { easy: 0, medium: 1, hard:
 
 export default function Problems() {
   const problems = useProblems()
+  const [params, setParams] = useSearchParams()
   const [showForm, setShowForm] = useState(false)
 
   const [search, setSearch] = useState('')
-  const [difficulty, setDifficulty] = useState<Difficulty | 'all'>('all')
-  const [status, setStatus] = useState<Status | 'all'>('all')
   const [tag, setTag] = useState<string>('all')
   const [sort, setSort] = useState<SortKey>('updated')
+
+  // 상태·난이도는 사이드바가 설정하는 URL 쿼리에서 읽는다.
+  const status = (params.get('status') as Status | null) ?? null
+  const difficulty = (params.get('difficulty') as Difficulty | null) ?? null
 
   const allTags = useMemo(() => {
     const set = new Set<string>()
@@ -38,8 +39,8 @@ export default function Problems() {
     if (!problems) return []
     const q = search.trim().toLowerCase()
     const list = problems.filter((p) => {
-      if (difficulty !== 'all' && p.difficulty !== difficulty) return false
-      if (status !== 'all' && p.status !== status) return false
+      if (difficulty && p.difficulty !== difficulty) return false
+      if (status && p.status !== status) return false
       if (tag !== 'all' && !p.tags.includes(tag)) return false
       if (q) {
         const hay = `${p.number ?? ''} ${p.title} ${p.tags.join(' ')}`.toLowerCase()
@@ -65,6 +66,17 @@ export default function Problems() {
     return list
   }, [problems, search, difficulty, status, tag, sort])
 
+  const activeFacets = [
+    status && { key: 'status', label: STATUS_LABELS[status] },
+    difficulty && { key: 'difficulty', label: DIFFICULTY_LABELS[difficulty] },
+  ].filter(Boolean) as { key: string; label: string }[]
+
+  function clearFacet(key: string) {
+    const p = new URLSearchParams(params)
+    p.delete(key)
+    setParams(p)
+  }
+
   return (
     <div className="animate-fade-up">
       <div className="flex items-center justify-between gap-3 mb-5">
@@ -72,22 +84,32 @@ export default function Problems() {
           <h1 className="text-2xl font-extrabold tracking-tight">
             문제{' '}
             {problems && (
-              <span className="text-slate-300 text-xl font-bold">
-                {problems.length}
-              </span>
+              <span className="text-slate-300 text-xl font-bold">{filtered.length}</span>
             )}
           </h1>
-          <p className="text-sm text-slate-400 mt-0.5">
-            풀이·메모·복잡도를 한곳에서 관리하세요.
-          </p>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {activeFacets.length === 0 ? (
+              <p className="text-sm text-slate-400">풀이·메모·복잡도를 한곳에서 관리하세요.</p>
+            ) : (
+              activeFacets.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => clearFacet(f.key)}
+                  className="chip gap-1 hover:bg-slate-200/80"
+                >
+                  {f.label}
+                  <CloseIcon width={12} height={12} />
+                </button>
+              ))
+            )}
+          </div>
         </div>
         <button onClick={() => setShowForm(true)} className="btn-primary shrink-0">
-          <PlusIcon width={18} height={18} />
-          <span className="hidden sm:inline">새 문제</span>
+          <PlusIcon width={18} height={18} />새 문제
         </button>
       </div>
 
-      {/* 필터 바 */}
+      {/* 검색 / 태그 / 정렬 */}
       <div className="card p-3 mb-5 flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[180px]">
           <SearchIcon
@@ -102,30 +124,6 @@ export default function Problems() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select
-          className="input w-auto"
-          value={difficulty}
-          onChange={(e) => setDifficulty(e.target.value as Difficulty | 'all')}
-        >
-          <option value="all">난이도 전체</option>
-          {DIFFICULTIES.map((d) => (
-            <option key={d} value={d}>
-              {DIFFICULTY_LABELS[d]}
-            </option>
-          ))}
-        </select>
-        <select
-          className="input w-auto"
-          value={status}
-          onChange={(e) => setStatus(e.target.value as Status | 'all')}
-        >
-          <option value="all">상태 전체</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABELS[s]}
-            </option>
-          ))}
-        </select>
         <select
           className="input w-auto"
           value={tag}

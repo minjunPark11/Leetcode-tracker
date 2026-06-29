@@ -114,3 +114,40 @@ export const BookIcon = (p: IconProps) => (
     <path d="M4 19a2 2 0 0 0 2 2h13" />
   </svg>
 )
+
+export const TargetIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="4" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+export const CircleIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8" />
+  </svg>
+)
+
+export const CircleDotIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+export const CircleCheckIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="m8.5 12 2.5 2.5 4.5-5" />
+  </svg>
+)
+
+export const RefreshIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+    <path d="M3 21v-5h5" />
+  </svg>
+)
