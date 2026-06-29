@@ -39,9 +39,9 @@ export default function App() {
   }, [])
 
   return (
-    <div className="min-h-screen lg:flex">
-      {/* 데스크톱 사이드바 */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 p-4">
+    <div className="min-h-screen flex">
+      {/* 사이드바 */}
+      <aside className="flex flex-col w-64 shrink-0 h-screen sticky top-0 p-4">
         <div className="card h-full flex flex-col p-4">
           <div className="flex items-center gap-2.5 px-2 py-3">
             <span className="grid place-items-center w-10 h-10 rounded-xl text-white bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-400/30">
@@ -79,21 +79,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* 모바일 상단 바 */}
-      <header className="lg:hidden sticky top-0 z-20 px-4 pt-4">
-        <div className="card flex items-center gap-2 px-3 py-2.5">
-          <span className="grid place-items-center w-9 h-9 rounded-lg text-white bg-gradient-to-br from-indigo-500 to-fuchsia-500">
-            <BookIcon width={18} height={18} />
-          </span>
-          <span className="font-bold gradient-text">LeetCode 트래커</span>
-          <div className="ml-auto">
-            <SyncBadge synced={synced} />
-          </div>
-        </div>
-      </header>
-
       {/* 콘텐츠 */}
-      <main className="flex-1 min-w-0 px-4 py-6 pb-28 lg:pb-10">
+      <main className="flex-1 min-w-0 px-4 py-6 lg:px-8">
         <div className="max-w-5xl mx-auto w-full">
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -102,27 +89,6 @@ export default function App() {
           </Routes>
         </div>
       </main>
-
-      {/* 모바일 하단 내비 */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-20 p-3">
-        <div className="card flex items-center justify-around px-2 py-1.5">
-          {NAV.map(({ to, label, Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                `flex flex-col items-center gap-0.5 px-5 py-1.5 rounded-xl text-xs font-semibold transition ${
-                  isActive ? 'text-violet-600' : 'text-slate-400'
-                }`
-              }
-            >
-              <Icon width={20} height={20} />
-              {label}
-            </NavLink>
-          ))}
-        </div>
-      </nav>
 
       <Toaster />
     </div>
