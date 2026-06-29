@@ -1,0 +1,5123 @@
+From 63d86a2376309fde57c0c0538927f8d18cd5e94a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 10:11:47 +0000
+Subject: [PATCH] Stage 1 (MVP): scaffold LeetCode study tracker
+
+Vite + React + TS + Tailwind app with local-first architecture:
+- Dexie (IndexedDB) cache with background Supabase sync (last-write-wins)
+- Single-account auto sign-in (no login UI); RLS preserved
+- Problem CRUD with filter/search/sort, detail view, create/edit form
+- Dashboard: totals, difficulty/tag progress, study streak
+- JSON export/import backup
+- supabase/schema.sql with problems + review_logs + RLS policies
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JJ2ALpPXcgcr9CfdzcsDU4
+---
+ .env.example                   |   10 +
+ .gitignore                     |   20 +
+ README.md                      |   83 +-
+ index.html                     |   12 +
+ package-lock.json              | 3201 ++++++++++++++++++++++++++++++++
+ package.json                   |   31 +
+ postcss.config.js              |    6 +
+ src/App.tsx                    |   63 +
+ src/components/Badges.tsx      |   41 +
+ src/components/ProblemForm.tsx |  230 +++
+ src/hooks/useProblems.ts       |   89 +
+ src/index.css                  |   11 +
+ src/lib/backup.ts              |   74 +
+ src/lib/db.ts                  |  173 ++
+ src/lib/supabase.ts            |   60 +
+ src/main.tsx                   |   13 +
+ src/pages/Dashboard.tsx        |  197 ++
+ src/pages/ProblemDetail.tsx    |  167 ++
+ src/pages/Problems.tsx         |  199 ++
+ src/types.ts                   |   71 +
+ src/vite-env.d.ts              |   12 +
+ supabase/schema.sql            |   53 +
+ tailwind.config.js             |   16 +
+ tsconfig.app.json              |   22 +
+ tsconfig.json                  |    7 +
+ tsconfig.node.json             |   19 +
+ vite.config.ts                 |    7 +
+ 27 files changed, 4886 insertions(+), 1 deletion(-)
+ create mode 100644 .env.example
+ create mode 100644 .gitignore
+ create mode 100644 index.html
+ create mode 100644 package-lock.json
+ create mode 100644 package.json
+ create mode 100644 postcss.config.js
+ create mode 100644 src/App.tsx
+ create mode 100644 src/components/Badges.tsx
+ create mode 100644 src/components/ProblemForm.tsx
+ create mode 100644 src/hooks/useProblems.ts
+ create mode 100644 src/index.css
+ create mode 100644 src/lib/backup.ts
+ create mode 100644 src/lib/db.ts
+ create mode 100644 src/lib/supabase.ts
+ create mode 100644 src/main.tsx
+ create mode 100644 src/pages/Dashboard.tsx
+ create mode 100644 src/pages/ProblemDetail.tsx
+ create mode 100644 src/pages/Problems.tsx
+ create mode 100644 src/types.ts
+ create mode 100644 src/vite-env.d.ts
+ create mode 100644 supabase/schema.sql
+ create mode 100644 tailwind.config.js
+ create mode 100644 tsconfig.app.json
+ create mode 100644 tsconfig.json
+ create mode 100644 tsconfig.node.json
+ create mode 100644 vite.config.ts
+
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..faf7b99
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,10 @@
++# Supabase 프로젝트 설정 (대시보드 > Project Settings > API)
++VITE_SUPABASE_URL=
++VITE_SUPABASE_ANON_KEY=
++
++# 단일 계정 자동 로그인용 자격증명
++# Supabase 대시보드 > Authentication > Users 에서 계정을 1개 만든 뒤,
++# 그 이메일/비밀번호를 아래에 입력하세요. 앱이 시작 시 자동으로 로그인합니다.
++# (값을 비워두면 인증 없이 로컬(Dexie)만으로 동작합니다.)
++VITE_APP_USER_EMAIL=
++VITE_APP_USER_PASSWORD=
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..08ad906
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,20 @@
++node_modules
++dist
++dist-ssr
++*.local
++*.tsbuildinfo
++.env
++.env.*
++!.env.example
++
++# editor
++.vscode/*
++!.vscode/extensions.json
++.idea
++.DS_Store
++
++# logs
++npm-debug.log*
++yarn-debug.log*
++yarn-error.log*
++pnpm-debug.log*
+diff --git a/README.md b/README.md
+index 6919f2c..3715fb4 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,82 @@
+-# Leetcode-tracker
+\ No newline at end of file
++# LeetCode 공부 트래커
++
++LeetCode 풀이 진도를 관리하는 개인용 웹앱. 푼 문제·풀이 코드·메모를 저장하고,
++로컬(IndexedDB)에 즉시 저장하면서 Supabase로 기기 간 동기화하며,
++JSON 파일로 백업/복원할 수 있습니다.
++
++> 구현 단계는 **1단계(MVP)** 와 **3단계(간격 반복·통계)** 만 다룹니다.
++> LeetCode 자동 가져오기는 구현하지 않으며, 문제 정보는 직접 입력합니다.
++> 현재 저장소에는 **1단계(MVP)** 가 구현되어 있습니다.
++
++## 기술 스택
++
++- Vite + React + TypeScript, Tailwind CSS, react-router-dom
++- Supabase (Postgres + Auth + RLS) — 클라우드 동기화
++- Dexie.js (IndexedDB) — 로컬 우선(local-first), 오프라인 동작
++- recharts + 커스텀 SVG — 통계/히트맵 (3단계)
++
++## 빠른 시작
++
++```bash
++npm install
++cp .env.example .env   # 값 채우기 (아래 참고). 비워두면 로컬 전용으로 동작.
++npm run dev
++```
++
++`.env` 를 비워두면 Supabase 없이 **로컬(IndexedDB) 전용**으로 바로 사용할 수 있습니다.
++
++## Supabase 연동 (선택, 기기 간 동기화용)
++
++로그인 화면 없이 개인용으로 쓰기 위해, **단일 계정 자동 로그인** 방식을 사용합니다.
++
++1. [supabase.com](https://supabase.com) 에서 프로젝트를 생성합니다.
++2. **SQL Editor** 에 [`supabase/schema.sql`](./supabase/schema.sql) 전체를 붙여넣고 실행합니다.
++   (테이블 `problems`, `review_logs` + RLS 정책이 생성됩니다.)
++3. **Authentication > Users > Add user** 로 본인 계정을 1개 만듭니다
++   (이메일 + 비밀번호, "Auto Confirm User" 체크).
++4. **Project Settings > API** 에서 URL 과 anon key 를 복사해 `.env` 에 입력합니다:
++
++   ```
++   VITE_SUPABASE_URL=https://xxxx.supabase.co
++   VITE_SUPABASE_ANON_KEY=eyJ...
++   VITE_APP_USER_EMAIL=you@example.com
++   VITE_APP_USER_PASSWORD=your-password
++   ```
++
++5. 앱을 실행하면 시작 시 이 계정으로 자동 로그인하고, RLS 로 본인 데이터만
++   접근·동기화합니다.
++
++> 비밀번호가 `.env` 에 들어가므로(빌드에 포함됨) **개인용/비공개 배포**에만 사용하세요.
++
++## 동기화 패턴 (local-first)
++
++1. 입력/수정 시 Dexie(IndexedDB)에 즉시 저장 → UI 바로 반영
++2. 백그라운드로 Supabase 에 upsert
++3. 앱 시작 시 Supabase 에서 최신 데이터를 받아 로컬 캐시 갱신
++4. 충돌은 `updated_at` 최신 우선(last-write-wins)으로 단순 처리
++
++## 스크립트
++
++| 명령 | 설명 |
++|------|------|
++| `npm run dev` | 개발 서버 |
++| `npm run build` | 타입체크 + 프로덕션 빌드 |
++| `npm run preview` | 빌드 결과 미리보기 |
++| `npm run typecheck` | 타입 검사만 |
++
++## 프로젝트 구조
++
++```
++src/
++  lib/        supabase.ts · db.ts(Dexie+동기화) · backup.ts · sm2.ts(3단계)
++  hooks/      useProblems.ts
++  pages/      Dashboard.tsx · Problems.tsx · ProblemDetail.tsx · ReviewQueue.tsx(3단계)
++  components/ ProblemForm.tsx · Badges.tsx · Heatmap.tsx(3단계)
++supabase/
++  schema.sql  DB 스키마 + RLS
++```
++
++## 로드맵
++
++- [x] **1단계 (MVP)**: 문제 CRUD, 필터·검색·정렬, 상세, 대시보드, 로컬 우선 저장 + 동기화, JSON 백업
++- [ ] **3단계**: SM-2 간격 반복 복습 큐, 잔디 히트맵, 심화 통계
+diff --git a/index.html b/index.html
+new file mode 100644
+index 0000000..4cb1601
+--- /dev/null
++++ b/index.html
+@@ -0,0 +1,12 @@
++<!doctype html>
++<html lang="ko">
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <title>LeetCode 공부 트래커</title>
++  </head>
++  <body>
++    <div id="root"></div>
++    <script type="module" src="/src/main.tsx"></script>
++  </body>
++</html>
+diff --git a/package-lock.json b/package-lock.json
+new file mode 100644
+index 0000000..b19e5e7
+--- /dev/null
++++ b/package-lock.json
+@@ -0,0 +1,3201 @@
++{
++  "name": "leetcode-tracker",
++  "version": "0.1.0",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "leetcode-tracker",
++      "version": "0.1.0",
++      "dependencies": {
++        "@supabase/supabase-js": "^2.45.4",
++        "dexie": "^4.0.8",
++        "dexie-react-hooks": "^1.1.7",
++        "react": "^18.3.1",
++        "react-dom": "^18.3.1",
++        "react-router-dom": "^6.26.2",
++        "recharts": "^2.12.7"
++      },
++      "devDependencies": {
++        "@types/react": "^18.3.5",
++        "@types/react-dom": "^18.3.0",
++        "@vitejs/plugin-react": "^4.3.1",
++        "autoprefixer": "^10.4.20",
++        "postcss": "^8.4.45",
++        "tailwindcss": "^3.4.10",
++        "typescript": "^5.5.4",
++        "vite": "^5.4.3"
++      }
++    },
++    "node_modules/@alloc/quick-lru": {
++      "version": "5.2.0",
++      "resolved": "https://registry.npmjs.org/@alloc/quick-lru/-/quick-lru-5.2.0.tgz",
++      "integrity": "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=10"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/@babel/code-frame": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.7.tgz",
++      "integrity": "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/helper-validator-identifier": "^7.29.7",
++        "js-tokens": "^4.0.0",
++        "picocolors": "^1.1.1"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/compat-data": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.29.7.tgz",
++      "integrity": "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/core": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.29.7.tgz",
++      "integrity": "sha512-RgHBCvtjbOK2gXSNBNIkNoEc9qoVEtau3hj8gEqKQuL3HZAibKarWFEI3Lfm6EYKkLalOh8eSrj9b+ch9H/VBA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/code-frame": "^7.29.7",
++        "@babel/generator": "^7.29.7",
++        "@babel/helper-compilation-targets": "^7.29.7",
++        "@babel/helper-module-transforms": "^7.29.7",
++        "@babel/helpers": "^7.29.7",
++        "@babel/parser": "^7.29.7",
++        "@babel/template": "^7.29.7",
++        "@babel/traverse": "^7.29.7",
++        "@babel/types": "^7.29.7",
++        "@jridgewell/remapping": "^2.3.5",
++        "convert-source-map": "^2.0.0",
++        "debug": "^4.1.0",
++        "gensync": "^1.0.0-beta.2",
++        "json5": "^2.2.3",
++        "semver": "^6.3.1"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/babel"
++      }
++    },
++    "node_modules/@babel/generator": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/generator/-/generator-7.29.7.tgz",
++      "integrity": "sha512-DkXD5OJQaAQIdZ1bt3UZdEnHAn9Imd3IVBdX03UFe+ony9Ojw5pzr9YVKGDY1jt+Gcn/FnGkNf8r+Vj5NOJWtQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/parser": "^7.29.7",
++        "@babel/types": "^7.29.7",
++        "@jridgewell/gen-mapping": "^0.3.12",
++        "@jridgewell/trace-mapping": "^0.3.28",
++        "jsesc": "^3.0.2"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-compilation-targets": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.29.7.tgz",
++      "integrity": "sha512-wem6WaBj4NaVYVdNhLPPVacES6ZJ+KBBfSkTMD3YZxbP3rm3Di85tJU5ljaUNhaOynt+Aj0xruhYuzQBt8n71g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/compat-data": "^7.29.7",
++        "@babel/helper-validator-option": "^7.29.7",
++        "browserslist": "^4.24.0",
++        "lru-cache": "^5.1.1",
++        "semver": "^6.3.1"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-globals": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.29.7.tgz",
++      "integrity": "sha512-3nQVUAtvkKH9zahfWgw96Jc/uFOmjACE1kQz82E2lqWmHBgjzbNlsC22nuQTfahmWeQtTq5nQ/4Nnd2A1wj4zA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-module-imports": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.29.7.tgz",
++      "integrity": "sha512-ejHwrQQYcm9xnTivShn2IDOlIzInN34AXskvq9QicvCtEzq1Vzclu/tKF8Jq1Cg8JG2GL6/EmjgsCT7lXepE3g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/traverse": "^7.29.7",
++        "@babel/types": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-module-transforms": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.29.7.tgz",
++      "integrity": "sha512-UPUVSyXbOh627KiCIGQSgwWzGeBKLkaJ9PJEdrngIwMSzxLR4jS4+f1f1jb7VzBbg8nFLaYotvVPFCTqdrmTAg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/helper-module-imports": "^7.29.7",
++        "@babel/helper-validator-identifier": "^7.29.7",
++        "@babel/traverse": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      },
++      "peerDependencies": {
++        "@babel/core": "^7.0.0"
++      }
++    },
++    "node_modules/@babel/helper-plugin-utils": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-plugin-utils/-/helper-plugin-utils-7.29.7.tgz",
++      "integrity": "sha512-G7sHYigPY17oO5SYWnfD/0MTBwVR781S/JI643e/JhUYgVgWE/61SoW3NH9KWUKyKq5LVh3npif99Wkt6j86Jw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-string-parser": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.29.7.tgz",
++      "integrity": "sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-validator-identifier": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.29.7.tgz",
++      "integrity": "sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helper-validator-option": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.29.7.tgz",
++      "integrity": "sha512-N9ZErrD+yW5geCDtBqnOoxmR8+tNKiGuxKlDpuJxfsqpa2dFcexaziGAE/qoHLiDDreVNMupxGmSoNlyvsA3gw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/helpers": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.29.7.tgz",
++      "integrity": "sha512-1k2lAGRMfHTcwuNYcCNUmaUffmQv8KWMfh2iJUUeRlwlwH4FdNG7mfPI10NPfLHJFThE4Tyr4mv7kTNZOiPuBg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/template": "^7.29.7",
++        "@babel/types": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/parser": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.7.tgz",
++      "integrity": "sha512-hnORnjP/1P/zFEndoeX+n+t1RwWRJiJpM/jO7FW32Kn9r5+sJB2JWOdYo4L6k78j15eCwY3Gm/7364B1EMwtNg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/types": "^7.29.7"
++      },
++      "bin": {
++        "parser": "bin/babel-parser.js"
++      },
++      "engines": {
++        "node": ">=6.0.0"
++      }
++    },
++    "node_modules/@babel/plugin-transform-react-jsx-self": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx-self/-/plugin-transform-react-jsx-self-7.29.7.tgz",
++      "integrity": "sha512-TL0hMc9xzy86VD31nUiwzd5otRAcyEPcsegCxolO0PvcXuH1v0kECe/UIznYFihpkvU5wg/jk4v0TTEFfm53fw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/helper-plugin-utils": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      },
++      "peerDependencies": {
++        "@babel/core": "^7.0.0-0"
++      }
++    },
++    "node_modules/@babel/plugin-transform-react-jsx-source": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx-source/-/plugin-transform-react-jsx-source-7.29.7.tgz",
++      "integrity": "sha512-06IyK09H3wi4cGbhDBwp5gUGo0IKtnYa8tyTiephirPCK6fbobVGiXMMI5zLQ4aKEYP3wZ3ArU44o+8KMrSG/Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/helper-plugin-utils": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      },
++      "peerDependencies": {
++        "@babel/core": "^7.0.0-0"
++      }
++    },
++    "node_modules/@babel/runtime": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.7.tgz",
++      "integrity": "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/template": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.29.7.tgz",
++      "integrity": "sha512-puq+Gf35oI24FeN11LkoUQFqv9uwNeWpxXZi/Ji3rRIoKAzKnxRaZ+Gkj0vKS9ZCiTESfng1N9LyOyXvo+m+Gg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/code-frame": "^7.29.7",
++        "@babel/parser": "^7.29.7",
++        "@babel/types": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/traverse": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.29.7.tgz",
++      "integrity": "sha512-EhlfNQtZ+NK22w5BM61ciuiq1m58ed33Wr1Xan//ZRTy6hgjnwyCffRYwzsGXdASJSUJ1guZILsErh1eQcl+zw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/code-frame": "^7.29.7",
++        "@babel/generator": "^7.29.7",
++        "@babel/helper-globals": "^7.29.7",
++        "@babel/parser": "^7.29.7",
++        "@babel/template": "^7.29.7",
++        "@babel/types": "^7.29.7",
++        "debug": "^4.3.1"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@babel/types": {
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/types/-/types-7.29.7.tgz",
++      "integrity": "sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/helper-string-parser": "^7.29.7",
++        "@babel/helper-validator-identifier": "^7.29.7"
++      },
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@esbuild/aix-ppc64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.21.5.tgz",
++      "integrity": "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "aix"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/android-arm": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.21.5.tgz",
++      "integrity": "sha512-vCPvzSjpPHEi1siZdlvAlsPxXl7WbOVUBBAowWug4rJHb68Ox8KualB+1ocNvT5fjv6wpkX6o/iEpbDrf68zcg==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/android-arm64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.21.5.tgz",
++      "integrity": "sha512-c0uX9VAUBQ7dTDCjq+wdyGLowMdtR/GoC2U5IYk/7D1H1JYC0qseD7+11iMP2mRLN9RcCMRcjC4YMclCzGwS/A==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/android-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.21.5.tgz",
++      "integrity": "sha512-D7aPRUUNHRBwHxzxRvp856rjUHRFW1SdQATKXH2hqA0kAZb1hKmi02OpYRacl0TxIGz/ZmXWlbZgjwWYaCakTA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/darwin-arm64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.21.5.tgz",
++      "integrity": "sha512-DwqXqZyuk5AiWWf3UfLiRDJ5EDd49zg6O9wclZ7kUMv2WRFr4HKjXp/5t8JZ11QbQfUS6/cRCKGwYhtNAY88kQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/darwin-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.21.5.tgz",
++      "integrity": "sha512-se/JjF8NlmKVG4kNIuyWMV/22ZaerB+qaSi5MdrXtd6R08kvs2qCN4C09miupktDitvh8jRFflwGFBQcxZRjbw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/freebsd-arm64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.21.5.tgz",
++      "integrity": "sha512-5JcRxxRDUJLX8JXp/wcBCy3pENnCgBR9bN6JsY4OmhfUtIHe3ZW0mawA7+RDAcMLrMIZaf03NlQiX9DGyB8h4g==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/freebsd-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.21.5.tgz",
++      "integrity": "sha512-J95kNBj1zkbMXtHVH29bBriQygMXqoVQOQYA+ISs0/2l3T9/kj42ow2mpqerRBxDJnmkUDCaQT/dfNXWX/ZZCQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-arm": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.21.5.tgz",
++      "integrity": "sha512-bPb5AHZtbeNGjCKVZ9UGqGwo8EUu4cLq68E95A53KlxAPRmUyYv2D6F0uUI65XisGOL1hBP5mTronbgo+0bFcA==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-arm64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.21.5.tgz",
++      "integrity": "sha512-ibKvmyYzKsBeX8d8I7MH/TMfWDXBF3db4qM6sy+7re0YXya+K1cem3on9XgdT2EQGMu4hQyZhan7TeQ8XkGp4Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-ia32": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.21.5.tgz",
++      "integrity": "sha512-YvjXDqLRqPDl2dvRODYmmhz4rPeVKYvppfGYKSNGdyZkA01046pLWyRKKI3ax8fbJoK5QbxblURkwK/MWY18Tg==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-loong64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.21.5.tgz",
++      "integrity": "sha512-uHf1BmMG8qEvzdrzAqg2SIG/02+4/DHB6a9Kbya0XDvwDEKCoC8ZRWI5JJvNdUjtciBGFQ5PuBlpEOXQj+JQSg==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-mips64el": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.21.5.tgz",
++      "integrity": "sha512-IajOmO+KJK23bj52dFSNCMsz1QP1DqM6cwLUv3W1QwyxkyIWecfafnI555fvSGqEKwjMXVLokcV5ygHW5b3Jbg==",
++      "cpu": [
++        "mips64el"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-ppc64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.21.5.tgz",
++      "integrity": "sha512-1hHV/Z4OEfMwpLO8rp7CvlhBDnjsC3CttJXIhBi+5Aj5r+MBvy4egg7wCbe//hSsT+RvDAG7s81tAvpL2XAE4w==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-riscv64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.21.5.tgz",
++      "integrity": "sha512-2HdXDMd9GMgTGrPWnJzP2ALSokE/0O5HhTUvWIbD3YdjME8JwvSCnNGBnTThKGEB91OZhzrJ4qIIxk/SBmyDDA==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-s390x": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.21.5.tgz",
++      "integrity": "sha512-zus5sxzqBJD3eXxwvjN1yQkRepANgxE9lgOW2qLnmr8ikMTphkjgXu1HR01K4FJg8h1kEEDAqDcZQtbrRnB41A==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/linux-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.21.5.tgz",
++      "integrity": "sha512-1rYdTpyv03iycF1+BhzrzQJCdOuAOtaqHTWJZCWvijKD2N5Xu0TtVC8/+1faWqcP9iBCWOmjmhoH94dH82BxPQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/netbsd-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.21.5.tgz",
++      "integrity": "sha512-Woi2MXzXjMULccIwMnLciyZH4nCIMpWQAs049KEeMvOcNADVxo0UBIQPfSmxB3CWKedngg7sWZdLvLczpe0tLg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/openbsd-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.21.5.tgz",
++      "integrity": "sha512-HLNNw99xsvx12lFBUwoT8EVCsSvRNDVxNpjZ7bPn947b8gJPzeHWyNVhFsaerc0n3TsbOINvRP2byTZ5LKezow==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/sunos-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.21.5.tgz",
++      "integrity": "sha512-6+gjmFpfy0BHU5Tpptkuh8+uw3mnrvgs+dSPQXQOv3ekbordwnzTVEb4qnIvQcYXq6gzkyTnoZ9dZG+D4garKg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "sunos"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/win32-arm64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.21.5.tgz",
++      "integrity": "sha512-Z0gOTd75VvXqyq7nsl93zwahcTROgqvuAcYDUr+vOv8uHhNSKROyU961kgtCD1e95IqPKSQKH7tBTslnS3tA8A==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/win32-ia32": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.21.5.tgz",
++      "integrity": "sha512-SWXFF1CL2RVNMaVs+BBClwtfZSvDgtL//G/smwAc5oVK/UPu2Gu9tIaRgFmYFFKrmg3SyAjSrElf0TiJ1v8fYA==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@esbuild/win32-x64": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.21.5.tgz",
++      "integrity": "sha512-tQd/1efJuzPC6rCFwEvLtci/xNFcTZknmXs98FYDfGE4wP9ClFV98nyKrzJKVPMhdDnjzLhdUyMX4PsQAPjwIw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/@jridgewell/gen-mapping": {
++      "version": "0.3.13",
++      "resolved": "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz",
++      "integrity": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/sourcemap-codec": "^1.5.0",
++        "@jridgewell/trace-mapping": "^0.3.24"
++      }
++    },
++    "node_modules/@jridgewell/remapping": {
++      "version": "2.3.5",
++      "resolved": "https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz",
++      "integrity": "sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/gen-mapping": "^0.3.5",
++        "@jridgewell/trace-mapping": "^0.3.24"
++      }
++    },
++    "node_modules/@jridgewell/resolve-uri": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
++      "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.0.0"
++      }
++    },
++    "node_modules/@jridgewell/sourcemap-codec": {
++      "version": "1.5.5",
++      "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz",
++      "integrity": "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@jridgewell/trace-mapping": {
++      "version": "0.3.31",
++      "resolved": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz",
++      "integrity": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/resolve-uri": "^3.1.0",
++        "@jridgewell/sourcemap-codec": "^1.4.14"
++      }
++    },
++    "node_modules/@nodelib/fs.scandir": {
++      "version": "2.1.5",
++      "resolved": "https://registry.npmjs.org/@nodelib/fs.scandir/-/fs.scandir-2.1.5.tgz",
++      "integrity": "sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@nodelib/fs.stat": "2.0.5",
++        "run-parallel": "^1.1.9"
++      },
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/@nodelib/fs.stat": {
++      "version": "2.0.5",
++      "resolved": "https://registry.npmjs.org/@nodelib/fs.stat/-/fs.stat-2.0.5.tgz",
++      "integrity": "sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/@nodelib/fs.walk": {
++      "version": "1.2.8",
++      "resolved": "https://registry.npmjs.org/@nodelib/fs.walk/-/fs.walk-1.2.8.tgz",
++      "integrity": "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@nodelib/fs.scandir": "2.1.5",
++        "fastq": "^1.6.0"
++      },
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/@remix-run/router": {
++      "version": "1.23.3",
++      "resolved": "https://registry.npmjs.org/@remix-run/router/-/router-1.23.3.tgz",
++      "integrity": "sha512-4An71tdz9X8+3sI4Qqqd2LWd9vS39J7sqd9EU4Scw7TJE/qB10Flv/UuqbPVgfQV9XoK8Np6jNquZitnZq5i+Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
++    "node_modules/@rolldown/pluginutils": {
++      "version": "1.0.0-beta.27",
++      "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.0-beta.27.tgz",
++      "integrity": "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@rollup/rollup-android-arm-eabi": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-android-arm-eabi/-/rollup-android-arm-eabi-4.62.2.tgz",
++      "integrity": "sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ]
++    },
++    "node_modules/@rollup/rollup-android-arm64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-android-arm64/-/rollup-android-arm64-4.62.2.tgz",
++      "integrity": "sha512-BaH7BllCACHoH1LguOU56UItGfUWjujlO65kS9LAodViaN4bwIKd7oeW/ZHJ/4ljr/7MIiENnNy3HJ0zXv8Zkw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ]
++    },
++    "node_modules/@rollup/rollup-darwin-arm64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.62.2.tgz",
++      "integrity": "sha512-v39RCCvj4He82I9sFmk+M1VZ0PLM9sfsLVikjfx2hYBNALhrrOR2D3JjQA6AhlaSOgcR+RzrKY7e1+bT6SUO/A==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@rollup/rollup-darwin-x64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-darwin-x64/-/rollup-darwin-x64-4.62.2.tgz",
++      "integrity": "sha512-yl0y2vq3S3lHeuXhEdss6TWfKW8vkujImO12tn4ZkG/4oghr09LvdYm2RElVjokTQiUvDUGXLGsYeLqUMCKpGA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ]
++    },
++    "node_modules/@rollup/rollup-freebsd-arm64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-freebsd-arm64/-/rollup-freebsd-arm64-4.62.2.tgz",
++      "integrity": "sha512-tT4pvt4qXD+vEoezupCWi+a1F0vvDiksiHc+PxRlYTOH1I6/X4id9jPxTP+Fg+545euaFT1jJVs4CEdHZAU1vw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ]
++    },
++    "node_modules/@rollup/rollup-freebsd-x64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-freebsd-x64/-/rollup-freebsd-x64-4.62.2.tgz",
++      "integrity": "sha512-6nU5F2wCW+qvCBhTn1pdIU3bzsIoF7EUwsCDRxilWGprQR6yd508YnH9+OKFCwpfS8pjZqDUmnCAr7exax0XCg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-arm-gnueabihf": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm-gnueabihf/-/rollup-linux-arm-gnueabihf-4.62.2.tgz",
++      "integrity": "sha512-n1GJHPOvpIfhi3TmrCeh6S6URt9BFCt0KQE3qvexyGCTAKpR4Lg+eWvNZEqu7epxwus/8ElT3hacYEucm49SZg==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-arm-musleabihf": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm-musleabihf/-/rollup-linux-arm-musleabihf-4.62.2.tgz",
++      "integrity": "sha512-JqgflS8wEB+UXV/vS1RpRbifGBeN4D5lz8D8oOFbFZw4vedvdOgCFAjfBmIMdW3yL10XpQQ0Ambepw6MXrhOnA==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-arm64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.62.2.tgz",
++      "integrity": "sha512-wnFJkogWvN4jm/hQRF2UBaeUmk20j5+DmHvoyWii2b8HJDyvz1MF2OU/6ynXt2KR63rbZLWkFpoytpdc/yBuSA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-arm64-musl": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-musl/-/rollup-linux-arm64-musl-4.62.2.tgz",
++      "integrity": "sha512-HVu2bp0zhvJ8xHEV9+UUs7S90VadmBSY3LcIMvozbPo4AuMGDWlz3ymHLHZPX4hR67TKTt8Qp5PJ5RBg/i+RMQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-loong64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-gnu/-/rollup-linux-loong64-gnu-4.62.2.tgz",
++      "integrity": "sha512-mQqqAV8QaoSgr9I2fKDLY2BAVvmKjWoGiu/cSYQonsLvtqwEn1E4QYfnCOcp5zoEqNhsDYin1s6jx/VJmrxlZg==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-loong64-musl": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-musl/-/rollup-linux-loong64-musl-4.62.2.tgz",
++      "integrity": "sha512-IxKLoxCQ2IWi6bT2akyDUBGsOImDKB+sPp4EsTmwFQ/fMwpCKm8uLSSgP/Kx/QYUgKis6SEZ5/Nlhup0DIA0PQ==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-ppc64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-gnu/-/rollup-linux-ppc64-gnu-4.62.2.tgz",
++      "integrity": "sha512-Mk5ha2RQSgyFfmYYLkBpPnUk8D8FriBxesO1u9O75X0mHgXL1UQcH5Itl2lurWL2tj0RxV9b9tJgipac0hRY9A==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-ppc64-musl": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-musl/-/rollup-linux-ppc64-musl-4.62.2.tgz",
++      "integrity": "sha512-CjvEnqJL/0/TQ3TXX3OPIJ/kmBellrWd4heXUmHeJlTnmwjKpSJzoehLaL6Xk0ZnMHBu9dZuFADNOrtjF4v+2w==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-riscv64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-gnu/-/rollup-linux-riscv64-gnu-4.62.2.tgz",
++      "integrity": "sha512-1SiZbzwdkaDURsew/tSOrooKiYy7EQGT6m8ufavAi9NEyQb/6VuIxFXAL1fqa4iZe3g4NbNk4P7J32z2tw5Mgg==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-riscv64-musl": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-musl/-/rollup-linux-riscv64-musl-4.62.2.tgz",
++      "integrity": "sha512-nQts12zJ3NQRoE6uYljOH89v7szzLDvG2JD/vsX+vGXU8w/At1GowTZ5/7qeFQ8m7L55rpR8Okugnuo5bgjy2Q==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-s390x-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-s390x-gnu/-/rollup-linux-s390x-gnu-4.62.2.tgz",
++      "integrity": "sha512-E9/ll019jhPIJgpzfZoIkBGhcz+kKNgVWYRY0zr9srBdPPFVpvOKW8VaJKUbeK+eZXyQF9ltME+Kk6affeaPgg==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-x64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.62.2.tgz",
++      "integrity": "sha512-5BqxR/pshjey51iliyzTD5Xi3EN0aLmQ2lZ3lvefVV9c82BvrLo2/6OT55iifpWBufs6kdwWbuOKS841DrmK9A==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-linux-x64-musl": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.62.2.tgz",
++      "integrity": "sha512-uNN83XxQrRAh/w0/pmAfibcwyb6YWt4gP+dpnQKPVJshAloQ785ii8CT8ZCIxkGg9opVsvAlGhFitSm6D1Jjpg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ]
++    },
++    "node_modules/@rollup/rollup-openbsd-x64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-openbsd-x64/-/rollup-openbsd-x64-4.62.2.tgz",
++      "integrity": "sha512-srjEIxSH3LRnJN6THczDHWQplqEMFiAJrTab0msUryh9kwNpkICf3Ea6q6MN/2cZwRFUNx5w+h6Hpi4QuHS6Zg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ]
++    },
++    "node_modules/@rollup/rollup-openharmony-arm64": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-openharmony-arm64/-/rollup-openharmony-arm64-4.62.2.tgz",
++      "integrity": "sha512-8hOJnxgbyObnCm5AlRA3A931xX19xq80RjVTKgJOvEKWqJruP/Uf12IbAOaDjjEXYRewwHLfmF0YRIdK3OwKWA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openharmony"
++      ]
++    },
++    "node_modules/@rollup/rollup-win32-arm64-msvc": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-arm64-msvc/-/rollup-win32-arm64-msvc-4.62.2.tgz",
++      "integrity": "sha512-mmF4AY1i0hG/bLWUctUq59gtmgaSIRa3cu/A3JFRp/sCNEme2bgDEiDS22P9FbnJB8NJNF4jPJiSP5RHQpUTDg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@rollup/rollup-win32-ia32-msvc": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-ia32-msvc/-/rollup-win32-ia32-msvc-4.62.2.tgz",
++      "integrity": "sha512-DZgkknc6jhHrk46V25vbAM0zZkyP0nSDkJB8/dRkLTxv470dOmWDqGoEJl/9A0dFfS7yE3REOwNDxpHwSLSt0Q==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@rollup/rollup-win32-x64-gnu": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-x64-gnu/-/rollup-win32-x64-gnu-4.62.2.tgz",
++      "integrity": "sha512-T6xr6ucWSFto+VGajA8YH26LdpHRuP4YLHEKAtCWvJDOlnmWcDZVCI2Jmjr+IFHDlt2zRaTAKE4tfjTaWLgJBg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@rollup/rollup-win32-x64-msvc": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.62.2.tgz",
++      "integrity": "sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ]
++    },
++    "node_modules/@supabase/auth-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/auth-js/-/auth-js-2.108.2.tgz",
++      "integrity": "sha512-tNaQmBgodDZwgB40mRwVbxFy8IDYwjdpcZ0BYrWiwlULCSQoJj4QoG4zgJT7QRPXcqipefNOzvO/qAu4dF98ag==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@supabase/functions-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/functions-js/-/functions-js-2.108.2.tgz",
++      "integrity": "sha512-RNUX8EiBy3iLwAX19jtRzLyePnl11/fHcgwDHLnpKcDSXt/5qBnh3LUwAtIjT21Q66QsmNUR2esrHziLCpNubw==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@supabase/phoenix": {
++      "version": "0.4.4",
++      "resolved": "https://registry.npmjs.org/@supabase/phoenix/-/phoenix-0.4.4.tgz",
++      "integrity": "sha512-Gt0pqoXuIqX/8dvG0OKp/wMCobXNH3klNbUPBNyOfN0YA1IswrM3HyWFMOPk1Jy+BRaIyDPcFx4jLBwHNmlyfQ==",
++      "license": "MIT"
++    },
++    "node_modules/@supabase/postgrest-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/postgrest-js/-/postgrest-js-2.108.2.tgz",
++      "integrity": "sha512-GQ28/Y8hk3CFmkb3kXH1h/AQx6JIYSQfO0CJMRVBcEKZoNy6C45cXAZ4fcJvRC5Id0cs6xnkUV0+c0rIocigsw==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@supabase/realtime-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/realtime-js/-/realtime-js-2.108.2.tgz",
++      "integrity": "sha512-aAGxCSUemZvQIibnCdvNvgaKib28I4rfrNjKbQ9cG1uBLwUsI7hVpGXgEbypCCDhLjQlDTAiJlu7rgljYUT73g==",
++      "license": "MIT",
++      "dependencies": {
++        "@supabase/phoenix": "^0.4.2",
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@supabase/storage-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/storage-js/-/storage-js-2.108.2.tgz",
++      "integrity": "sha512-TVZPQxXGxY2+A6yTtm77zUHsh70lBhYUEaJL8RQC+BghcX/ygiMG/rmXrNVBce30/WAeNPa8FiG8HbqlGeV05g==",
++      "license": "MIT",
++      "dependencies": {
++        "iceberg-js": "^0.8.1",
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@supabase/supabase-js": {
++      "version": "2.108.2",
++      "resolved": "https://registry.npmjs.org/@supabase/supabase-js/-/supabase-js-2.108.2.tgz",
++      "integrity": "sha512-hFhnPveb5JQg4a0QYicM0swT253YHMdfeRAl2BKHOlI5VAzuHxUGSr8RbwNLYNPauWOgQMS1H8sz8bvYlgwUfQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@supabase/auth-js": "2.108.2",
++        "@supabase/functions-js": "2.108.2",
++        "@supabase/postgrest-js": "2.108.2",
++        "@supabase/realtime-js": "2.108.2",
++        "@supabase/storage-js": "2.108.2"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/@types/babel__core": {
++      "version": "7.20.5",
++      "resolved": "https://registry.npmjs.org/@types/babel__core/-/babel__core-7.20.5.tgz",
++      "integrity": "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/parser": "^7.20.7",
++        "@babel/types": "^7.20.7",
++        "@types/babel__generator": "*",
++        "@types/babel__template": "*",
++        "@types/babel__traverse": "*"
++      }
++    },
++    "node_modules/@types/babel__generator": {
++      "version": "7.27.0",
++      "resolved": "https://registry.npmjs.org/@types/babel__generator/-/babel__generator-7.27.0.tgz",
++      "integrity": "sha512-ufFd2Xi92OAVPYsy+P4n7/U7e68fex0+Ee8gSG9KX7eo084CWiQ4sdxktvdl0bOPupXtVJPY19zk6EwWqUQ8lg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/types": "^7.0.0"
++      }
++    },
++    "node_modules/@types/babel__template": {
++      "version": "7.4.4",
++      "resolved": "https://registry.npmjs.org/@types/babel__template/-/babel__template-7.4.4.tgz",
++      "integrity": "sha512-h/NUaSyG5EyxBIp8YRxo4RMe2/qQgvyowRwVMzhYhBCONbW8PUsg4lkFMrhgZhUe5z3L3MiLDuvyJ/CaPa2A8A==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/parser": "^7.1.0",
++        "@babel/types": "^7.0.0"
++      }
++    },
++    "node_modules/@types/babel__traverse": {
++      "version": "7.28.0",
++      "resolved": "https://registry.npmjs.org/@types/babel__traverse/-/babel__traverse-7.28.0.tgz",
++      "integrity": "sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/types": "^7.28.2"
++      }
++    },
++    "node_modules/@types/d3-array": {
++      "version": "3.2.2",
++      "resolved": "https://registry.npmjs.org/@types/d3-array/-/d3-array-3.2.2.tgz",
++      "integrity": "sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw==",
++      "license": "MIT"
++    },
++    "node_modules/@types/d3-color": {
++      "version": "3.1.3",
++      "resolved": "https://registry.npmjs.org/@types/d3-color/-/d3-color-3.1.3.tgz",
++      "integrity": "sha512-iO90scth9WAbmgv7ogoq57O9YpKmFBbmoEoCHDB2xMBY0+/KVrqAaCDyCE16dUspeOvIxFFRI+0sEtqDqy2b4A==",
++      "license": "MIT"
++    },
++    "node_modules/@types/d3-ease": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/@types/d3-ease/-/d3-ease-3.0.2.tgz",
++      "integrity": "sha512-NcV1JjO5oDzoK26oMzbILE6HW7uVXOHLQvHshBUW4UMdZGfiY6v5BeQwh9a9tCzv+CeefZQHJt5SRgK154RtiA==",
++      "license": "MIT"
++    },
++    "node_modules/@types/d3-interpolate": {
++      "version": "3.0.4",
++      "resolved": "https://registry.npmjs.org/@types/d3-interpolate/-/d3-interpolate-3.0.4.tgz",
++      "integrity": "sha512-mgLPETlrpVV1YRJIglr4Ez47g7Yxjl1lj7YKsiMCb27VJH9W8NVM6Bb9d8kkpG/uAQS5AmbA48q2IAolKKo1MA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/d3-color": "*"
++      }
++    },
++    "node_modules/@types/d3-path": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/@types/d3-path/-/d3-path-3.1.1.tgz",
++      "integrity": "sha512-VMZBYyQvbGmWyWVea0EHs/BwLgxc+MKi1zLDCONksozI4YJMcTt8ZEuIR4Sb1MMTE8MMW49v0IwI5+b7RmfWlg==",
++      "license": "MIT"
++    },
++    "node_modules/@types/d3-scale": {
++      "version": "4.0.9",
++      "resolved": "https://registry.npmjs.org/@types/d3-scale/-/d3-scale-4.0.9.tgz",
++      "integrity": "sha512-dLmtwB8zkAeO/juAMfnV+sItKjlsw2lKdZVVy6LRr0cBmegxSABiLEpGVmSJJ8O08i4+sGR6qQtb6WtuwJdvVw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/d3-time": "*"
++      }
++    },
++    "node_modules/@types/d3-shape": {
++      "version": "3.1.8",
++      "resolved": "https://registry.npmjs.org/@types/d3-shape/-/d3-shape-3.1.8.tgz",
++      "integrity": "sha512-lae0iWfcDeR7qt7rA88BNiqdvPS5pFVPpo5OfjElwNaT2yyekbM0C9vK+yqBqEmHr6lDkRnYNoTBYlAgJa7a4w==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/d3-path": "*"
++      }
++    },
++    "node_modules/@types/d3-time": {
++      "version": "3.0.4",
++      "resolved": "https://registry.npmjs.org/@types/d3-time/-/d3-time-3.0.4.tgz",
++      "integrity": "sha512-yuzZug1nkAAaBlBBikKZTgzCeA+k1uy4ZFwWANOfKw5z5LRhV0gNA7gNkKm7HoK+HRN0wX3EkxGk0fpbWhmB7g==",
++      "license": "MIT"
++    },
++    "node_modules/@types/d3-timer": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/@types/d3-timer/-/d3-timer-3.0.2.tgz",
++      "integrity": "sha512-Ps3T8E8dZDam6fUyNiMkekK3XUsaUEik+idO9/YjPtfj2qruF8tFBXS7XhtE4iIXBLxhmLjP3SXpLhVf21I9Lw==",
++      "license": "MIT"
++    },
++    "node_modules/@types/estree": {
++      "version": "1.0.9",
++      "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
++      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/prop-types": {
++      "version": "15.7.15",
++      "resolved": "https://registry.npmjs.org/@types/prop-types/-/prop-types-15.7.15.tgz",
++      "integrity": "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==",
++      "license": "MIT"
++    },
++    "node_modules/@types/react": {
++      "version": "18.3.31",
++      "resolved": "https://registry.npmjs.org/@types/react/-/react-18.3.31.tgz",
++      "integrity": "sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/prop-types": "*",
++        "csstype": "^3.2.2"
++      }
++    },
++    "node_modules/@types/react-dom": {
++      "version": "18.3.7",
++      "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-18.3.7.tgz",
++      "integrity": "sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==",
++      "dev": true,
++      "license": "MIT",
++      "peerDependencies": {
++        "@types/react": "^18.0.0"
++      }
++    },
++    "node_modules/@vitejs/plugin-react": {
++      "version": "4.7.0",
++      "resolved": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-4.7.0.tgz",
++      "integrity": "sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/core": "^7.28.0",
++        "@babel/plugin-transform-react-jsx-self": "^7.27.1",
++        "@babel/plugin-transform-react-jsx-source": "^7.27.1",
++        "@rolldown/pluginutils": "1.0.0-beta.27",
++        "@types/babel__core": "^7.20.5",
++        "react-refresh": "^0.17.0"
++      },
++      "engines": {
++        "node": "^14.18.0 || >=16.0.0"
++      },
++      "peerDependencies": {
++        "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
++      }
++    },
++    "node_modules/any-promise": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/any-promise/-/any-promise-1.3.0.tgz",
++      "integrity": "sha512-7UvmKalWRt1wgjL1RrGxoSJW/0QZFIegpeGvZG9kjp8vrRu55XTHbwnqq2GpXm9uLbcuhxm3IqX9OB4MZR1b2A==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/anymatch": {
++      "version": "3.1.3",
++      "resolved": "https://registry.npmjs.org/anymatch/-/anymatch-3.1.3.tgz",
++      "integrity": "sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "normalize-path": "^3.0.0",
++        "picomatch": "^2.0.4"
++      },
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/arg": {
++      "version": "5.0.2",
++      "resolved": "https://registry.npmjs.org/arg/-/arg-5.0.2.tgz",
++      "integrity": "sha512-PYjyFOLKQ9y57JvQ6QLo8dAgNqswh8M1RMJYdQduT6xbWSgK36P/Z/v+p888pM69jMMfS8Xd8F6I1kQ/I9HUGg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/autoprefixer": {
++      "version": "10.5.2",
++      "resolved": "https://registry.npmjs.org/autoprefixer/-/autoprefixer-10.5.2.tgz",
++      "integrity": "sha512-rD5t5DwOjJdmSORcTq64j8MawTC+tbQ+HHqjR4NDumamy/ambn1UJrlKL+KdwujWxMkFjPM3pPHOEA9tl4767Q==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/autoprefixer"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "browserslist": "^4.28.4",
++        "caniuse-lite": "^1.0.30001799",
++        "fraction.js": "^5.3.4",
++        "picocolors": "^1.1.1",
++        "postcss-value-parser": "^4.2.0"
++      },
++      "bin": {
++        "autoprefixer": "bin/autoprefixer"
++      },
++      "engines": {
++        "node": "^10 || ^12 || >=14"
++      },
++      "peerDependencies": {
++        "postcss": "^8.1.0"
++      }
++    },
++    "node_modules/baseline-browser-mapping": {
++      "version": "2.10.40",
++      "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.10.40.tgz",
++      "integrity": "sha512-BSSLZ9/Cjjv7Gtj5B68ZzXcXUg8iOf3fme+FCuh8rC/Go+Kmh8cox7M3A8dolou16s64QjLPOSdngh7GxXvkSw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "baseline-browser-mapping": "dist/cli.cjs"
++      },
++      "engines": {
++        "node": ">=6.0.0"
++      }
++    },
++    "node_modules/binary-extensions": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/binary-extensions/-/binary-extensions-2.3.0.tgz",
++      "integrity": "sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=8"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/braces": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
++      "integrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "fill-range": "^7.1.1"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/browserslist": {
++      "version": "4.28.4",
++      "resolved": "https://registry.npmjs.org/browserslist/-/browserslist-4.28.4.tgz",
++      "integrity": "sha512-MTc8i/x9jBQd1iMw2CFGS+rwMa07eYjLR0CCTLDACl9xhxy+nIs3KeML/biicXtk9JrZ6dnnTatmc7ErPXIxqw==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/browserslist"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/browserslist"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "baseline-browser-mapping": "^2.10.38",
++        "caniuse-lite": "^1.0.30001799",
++        "electron-to-chromium": "^1.5.376",
++        "node-releases": "^2.0.48",
++        "update-browserslist-db": "^1.2.3"
++      },
++      "bin": {
++        "browserslist": "cli.js"
++      },
++      "engines": {
++        "node": "^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7"
++      }
++    },
++    "node_modules/camelcase-css": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/camelcase-css/-/camelcase-css-2.0.1.tgz",
++      "integrity": "sha512-QOSvevhslijgYwRx6Rv7zKdMF8lbRmx+uQGx2+vDc+KI/eBnsy9kit5aj23AgGu3pa4t9AgwbnXWqS+iOY+2aA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/caniuse-lite": {
++      "version": "1.0.30001799",
++      "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001799.tgz",
++      "integrity": "sha512-hG1bReV+OUU+MOqK4t/ZWI0tZOyz3rqS9XuhOUz1cIcbwBKjOyJEJuw9ER5JuNyqxNk8u/JUVbGibBOL1yrjFw==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/browserslist"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/caniuse-lite"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "CC-BY-4.0"
++    },
++    "node_modules/chokidar": {
++      "version": "3.6.0",
++      "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz",
++      "integrity": "sha512-7VT13fmjotKpGipCW9JEQAusEPE+Ei8nl6/g4FBAmIm0GOOLMua9NDDo/DWp0ZAxCr3cPq5ZpBqmPAQgDda2Pw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "anymatch": "~3.1.2",
++        "braces": "~3.0.2",
++        "glob-parent": "~5.1.2",
++        "is-binary-path": "~2.1.0",
++        "is-glob": "~4.0.1",
++        "normalize-path": "~3.0.0",
++        "readdirp": "~3.6.0"
++      },
++      "engines": {
++        "node": ">= 8.10.0"
++      },
++      "funding": {
++        "url": "https://paulmillr.com/funding/"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.2"
++      }
++    },
++    "node_modules/chokidar/node_modules/glob-parent": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-5.1.2.tgz",
++      "integrity": "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "is-glob": "^4.0.1"
++      },
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/clsx": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
++      "integrity": "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
++    "node_modules/commander": {
++      "version": "4.1.1",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-4.1.1.tgz",
++      "integrity": "sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/convert-source-map": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
++      "integrity": "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/cssesc": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/cssesc/-/cssesc-3.0.0.tgz",
++      "integrity": "sha512-/Tb/JcjK111nNScGob5MNtsntNM1aCNUDipB/TkwZFhyDrrE47SOx/18wF2bbjgc3ZzCSKW1T5nt5EbFoAz/Vg==",
++      "dev": true,
++      "license": "MIT",
++      "bin": {
++        "cssesc": "bin/cssesc"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/csstype": {
++      "version": "3.2.3",
++      "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
++      "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
++      "license": "MIT"
++    },
++    "node_modules/d3-array": {
++      "version": "3.2.4",
++      "resolved": "https://registry.npmjs.org/d3-array/-/d3-array-3.2.4.tgz",
++      "integrity": "sha512-tdQAmyA18i4J7wprpYq8ClcxZy3SC31QMeByyCFyRt7BVHdREQZ5lpzoe5mFEYZUWe+oq8HBvk9JjpibyEV4Jg==",
++      "license": "ISC",
++      "dependencies": {
++        "internmap": "1 - 2"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-color": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-color/-/d3-color-3.1.0.tgz",
++      "integrity": "sha512-zg/chbXyeBtMQ1LbD/WSoW2DpC3I0mpmPdW+ynRTj/x2DAWYrIY7qeZIHidozwV24m4iavr15lNwIwLxRmOxhA==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-ease": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-ease/-/d3-ease-3.0.1.tgz",
++      "integrity": "sha512-wR/XK3D3XcLIZwpbvQwQ5fK+8Ykds1ip7A2Txe0yxncXSdq1L9skcG7blcedkOX+ZcgxGAmLX1FrRGbADwzi0w==",
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-format": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/d3-format/-/d3-format-3.1.2.tgz",
++      "integrity": "sha512-AJDdYOdnyRDV5b6ArilzCPPwc1ejkHcoyFarqlPqT7zRYjhavcT3uSrqcMvsgh2CgoPbK3RCwyHaVyxYcP2Arg==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-interpolate": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-interpolate/-/d3-interpolate-3.0.1.tgz",
++      "integrity": "sha512-3bYs1rOD33uo8aqJfKP3JWPAibgw8Zm2+L9vBKEHJ2Rg+viTR7o5Mmv5mZcieN+FRYaAOWX5SJATX6k1PWz72g==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-color": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-path": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-path/-/d3-path-3.1.0.tgz",
++      "integrity": "sha512-p3KP5HCf/bvjBSSKuXid6Zqijx7wIfNW+J/maPs+iwR35at5JCbLUT0LzF1cnjbCHWhqzQTIN2Jpe8pRebIEFQ==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-scale": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/d3-scale/-/d3-scale-4.0.2.tgz",
++      "integrity": "sha512-GZW464g1SH7ag3Y7hXjf8RoUuAFIqklOAq3MRl4OaWabTFJY9PN/E1YklhXLh+OQ3fM9yS2nOkCoS+WLZ6kvxQ==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-array": "2.10.0 - 3",
++        "d3-format": "1 - 3",
++        "d3-interpolate": "1.2.0 - 3",
++        "d3-time": "2.1.1 - 3",
++        "d3-time-format": "2 - 4"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-shape": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/d3-shape/-/d3-shape-3.2.0.tgz",
++      "integrity": "sha512-SaLBuwGm3MOViRq2ABk3eLoxwZELpH6zhl3FbAoJ7Vm1gofKx6El1Ib5z23NUEhF9AsGl7y+dzLe5Cw2AArGTA==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-path": "^3.1.0"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-time": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-time/-/d3-time-3.1.0.tgz",
++      "integrity": "sha512-VqKjzBLejbSMT4IgbmVgDjpkYrNWUYJnbCGo874u7MMKIWsILRX+OpX/gTk8MqjpT1A/c6HY2dCA77ZN0lkQ2Q==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-array": "2 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-time-format": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/d3-time-format/-/d3-time-format-4.1.0.tgz",
++      "integrity": "sha512-dJxPBlzC7NugB2PDLwo9Q8JiTR3M3e4/XANkreKSUxF8vvXKqm1Yfq4Q5dl8budlunRVlUUaDUgFt7eA8D6NLg==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-time": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-timer": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-timer/-/d3-timer-3.0.1.tgz",
++      "integrity": "sha512-ndfJ/JxxMd3nw31uyKoY2naivF+r29V+Lc0svZxe1JvvIRmi8hUsrMvdOwgS1o6uBHmiz91geQ0ylPP0aj1VUA==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/debug": {
++      "version": "4.4.3",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
++      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "ms": "^2.1.3"
++      },
++      "engines": {
++        "node": ">=6.0"
++      },
++      "peerDependenciesMeta": {
++        "supports-color": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/decimal.js-light": {
++      "version": "2.5.1",
++      "resolved": "https://registry.npmjs.org/decimal.js-light/-/decimal.js-light-2.5.1.tgz",
++      "integrity": "sha512-qIMFpTMZmny+MMIitAB6D7iVPEorVw6YQRWkvarTkT4tBeSLLiHzcwj6q0MmYSFCiVpiqPJTJEYIrpcPzVEIvg==",
++      "license": "MIT"
++    },
++    "node_modules/dexie": {
++      "version": "4.4.4",
++      "resolved": "https://registry.npmjs.org/dexie/-/dexie-4.4.4.tgz",
++      "integrity": "sha512-jIwsYI8Os2hgnqc6O49YwFDKGc5v5QjGx0wPVp543ip1F53VFAKMLthV2pQosQcVTv3eAskTWYspOx195PM0FQ==",
++      "license": "Apache-2.0"
++    },
++    "node_modules/dexie-react-hooks": {
++      "version": "1.1.7",
++      "resolved": "https://registry.npmjs.org/dexie-react-hooks/-/dexie-react-hooks-1.1.7.tgz",
++      "integrity": "sha512-Lwv5W0Hk+uOW3kGnsU9GZoR1er1B7WQ5DSdonoNG+focTNeJbHW6vi6nBoX534VKI3/uwHebYzSw1fwY6a7mTw==",
++      "license": "Apache-2.0",
++      "peerDependencies": {
++        "@types/react": ">=16",
++        "dexie": "^3.2 || ^4.0.1-alpha",
++        "react": ">=16"
++      }
++    },
++    "node_modules/didyoumean": {
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/didyoumean/-/didyoumean-1.2.2.tgz",
++      "integrity": "sha512-gxtyfqMg7GKyhQmb056K7M3xszy/myH8w+B4RT+QXBQsvAOdc3XymqDDPHx1BgPgsdAA5SIifona89YtRATDzw==",
++      "dev": true,
++      "license": "Apache-2.0"
++    },
++    "node_modules/dlv": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/dlv/-/dlv-1.1.3.tgz",
++      "integrity": "sha512-+HlytyjlPKnIG8XuRG8WvmBP8xs8P71y+SKKS6ZXWoEgLuePxtDoUEiH7WkdePWrQ5JBpE6aoVqfZfJUQkjXwA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/dom-helpers": {
++      "version": "5.2.1",
++      "resolved": "https://registry.npmjs.org/dom-helpers/-/dom-helpers-5.2.1.tgz",
++      "integrity": "sha512-nRCa7CK3VTrM2NmGkIy4cbK7IZlgBE/PYMn55rrXefr5xXDP0LdtfPnblFDoVdcAfslJ7or6iqAUnx0CCGIWQA==",
++      "license": "MIT",
++      "dependencies": {
++        "@babel/runtime": "^7.8.7",
++        "csstype": "^3.0.2"
++      }
++    },
++    "node_modules/electron-to-chromium": {
++      "version": "1.5.381",
++      "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.381.tgz",
++      "integrity": "sha512-n9Wa6yB+vDsGuA8AKbl/0z7HbvWqt5jxIdvr1IUicd0ryPrk7/xzwqLv8D9AbbvZ6avVNtXYLTfmgFHkwkyelg==",
++      "dev": true,
++      "license": "ISC"
++    },
++    "node_modules/es-errors": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
++      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/esbuild": {
++      "version": "0.21.5",
++      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
++      "integrity": "sha512-mg3OPMV4hXywwpoDxu3Qda5xCKQi+vCTZq8S9J/EpkhB2HzKXq4SNFZE3+NK93JYxc8VMSep+lOUSC/RVKaBqw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "license": "MIT",
++      "bin": {
++        "esbuild": "bin/esbuild"
++      },
++      "engines": {
++        "node": ">=12"
++      },
++      "optionalDependencies": {
++        "@esbuild/aix-ppc64": "0.21.5",
++        "@esbuild/android-arm": "0.21.5",
++        "@esbuild/android-arm64": "0.21.5",
++        "@esbuild/android-x64": "0.21.5",
++        "@esbuild/darwin-arm64": "0.21.5",
++        "@esbuild/darwin-x64": "0.21.5",
++        "@esbuild/freebsd-arm64": "0.21.5",
++        "@esbuild/freebsd-x64": "0.21.5",
++        "@esbuild/linux-arm": "0.21.5",
++        "@esbuild/linux-arm64": "0.21.5",
++        "@esbuild/linux-ia32": "0.21.5",
++        "@esbuild/linux-loong64": "0.21.5",
++        "@esbuild/linux-mips64el": "0.21.5",
++        "@esbuild/linux-ppc64": "0.21.5",
++        "@esbuild/linux-riscv64": "0.21.5",
++        "@esbuild/linux-s390x": "0.21.5",
++        "@esbuild/linux-x64": "0.21.5",
++        "@esbuild/netbsd-x64": "0.21.5",
++        "@esbuild/openbsd-x64": "0.21.5",
++        "@esbuild/sunos-x64": "0.21.5",
++        "@esbuild/win32-arm64": "0.21.5",
++        "@esbuild/win32-ia32": "0.21.5",
++        "@esbuild/win32-x64": "0.21.5"
++      }
++    },
++    "node_modules/escalade": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz",
++      "integrity": "sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
++    "node_modules/eventemitter3": {
++      "version": "4.0.7",
++      "resolved": "https://registry.npmjs.org/eventemitter3/-/eventemitter3-4.0.7.tgz",
++      "integrity": "sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw==",
++      "license": "MIT"
++    },
++    "node_modules/fast-equals": {
++      "version": "5.4.0",
++      "resolved": "https://registry.npmjs.org/fast-equals/-/fast-equals-5.4.0.tgz",
++      "integrity": "sha512-jt2DW/aNFNwke7AUd+Z+e6pz39KO5rzdbbFCg2sGafS4mk13MI7Z8O5z9cADNn5lhGODIgLwug6TZO2ctf7kcw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.0.0"
++      }
++    },
++    "node_modules/fast-glob": {
++      "version": "3.3.3",
++      "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.3.tgz",
++      "integrity": "sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@nodelib/fs.stat": "^2.0.2",
++        "@nodelib/fs.walk": "^1.2.3",
++        "glob-parent": "^5.1.2",
++        "merge2": "^1.3.0",
++        "micromatch": "^4.0.8"
++      },
++      "engines": {
++        "node": ">=8.6.0"
++      }
++    },
++    "node_modules/fast-glob/node_modules/glob-parent": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-5.1.2.tgz",
++      "integrity": "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "is-glob": "^4.0.1"
++      },
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/fastq": {
++      "version": "1.20.1",
++      "resolved": "https://registry.npmjs.org/fastq/-/fastq-1.20.1.tgz",
++      "integrity": "sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "reusify": "^1.0.4"
++      }
++    },
++    "node_modules/fill-range": {
++      "version": "7.1.1",
++      "resolved": "https://registry.npmjs.org/fill-range/-/fill-range-7.1.1.tgz",
++      "integrity": "sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "to-regex-range": "^5.0.1"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/fraction.js": {
++      "version": "5.3.4",
++      "resolved": "https://registry.npmjs.org/fraction.js/-/fraction.js-5.3.4.tgz",
++      "integrity": "sha512-1X1NTtiJphryn/uLQz3whtY6jK3fTqoE3ohKs0tT+Ujr1W59oopxmoEh7Lu5p6vBaPbgoM0bzveAW4Qi5RyWDQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": "*"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/rawify"
++      }
++    },
++    "node_modules/fsevents": {
++      "version": "2.3.3",
++      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
++      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
++      }
++    },
++    "node_modules/function-bind": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
++      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/gensync": {
++      "version": "1.0.0-beta.2",
++      "resolved": "https://registry.npmjs.org/gensync/-/gensync-1.0.0-beta.2.tgz",
++      "integrity": "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.9.0"
++      }
++    },
++    "node_modules/glob-parent": {
++      "version": "6.0.2",
++      "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz",
++      "integrity": "sha512-XxwI8EOhVQgWp6iDL+3b0r86f4d6AX6zSU55HfB4ydCEuXLXc5FcYeOu+nnGftS4TEju/11rt4KJPTMgbfmv4A==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "is-glob": "^4.0.3"
++      },
++      "engines": {
++        "node": ">=10.13.0"
++      }
++    },
++    "node_modules/hasown": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz",
++      "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "function-bind": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/iceberg-js": {
++      "version": "0.8.1",
++      "resolved": "https://registry.npmjs.org/iceberg-js/-/iceberg-js-0.8.1.tgz",
++      "integrity": "sha512-1dhVQZXhcHje7798IVM+xoo/1ZdVfzOMIc8/rgVSijRK38EDqOJoGula9N/8ZI5RD8QTxNQtK/Gozpr+qUqRRA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/internmap": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/internmap/-/internmap-2.0.3.tgz",
++      "integrity": "sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/is-binary-path": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/is-binary-path/-/is-binary-path-2.1.0.tgz",
++      "integrity": "sha512-ZMERYes6pDydyuGidse7OsHxtbI7WVeUEozgR/g7rd0xUimYNlvZRE/K2MgZTjWy725IfelLeVcEM97mmtRGXw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "binary-extensions": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/is-core-module": {
++      "version": "2.16.2",
++      "resolved": "https://registry.npmjs.org/is-core-module/-/is-core-module-2.16.2.tgz",
++      "integrity": "sha512-evOr8xfXKxE6qSR0hSXL2r3sd7ALj8+7jQEUvPYcm5sgZFdJ+AYzT6yNmJenvIYQBgIGwfwz08sL8zoL7yq2BA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "hasown": "^2.0.3"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/is-extglob": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz",
++      "integrity": "sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/is-glob": {
++      "version": "4.0.3",
++      "resolved": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz",
++      "integrity": "sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "is-extglob": "^2.1.1"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/is-number": {
++      "version": "7.0.0",
++      "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
++      "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.12.0"
++      }
++    },
++    "node_modules/jiti": {
++      "version": "1.21.7",
++      "resolved": "https://registry.npmjs.org/jiti/-/jiti-1.21.7.tgz",
++      "integrity": "sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==",
++      "dev": true,
++      "license": "MIT",
++      "bin": {
++        "jiti": "bin/jiti.js"
++      }
++    },
++    "node_modules/js-tokens": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
++      "integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==",
++      "license": "MIT"
++    },
++    "node_modules/jsesc": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/jsesc/-/jsesc-3.1.0.tgz",
++      "integrity": "sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==",
++      "dev": true,
++      "license": "MIT",
++      "bin": {
++        "jsesc": "bin/jsesc"
++      },
++      "engines": {
++        "node": ">=6"
++      }
++    },
++    "node_modules/json5": {
++      "version": "2.2.3",
++      "resolved": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz",
++      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
++      "dev": true,
++      "license": "MIT",
++      "bin": {
++        "json5": "lib/cli.js"
++      },
++      "engines": {
++        "node": ">=6"
++      }
++    },
++    "node_modules/lilconfig": {
++      "version": "3.1.3",
++      "resolved": "https://registry.npmjs.org/lilconfig/-/lilconfig-3.1.3.tgz",
++      "integrity": "sha512-/vlFKAoH5Cgt3Ie+JLhRbwOsCQePABiU3tJ1egGvyQ+33R/vcwM2Zl2QR/LzjsBeItPt3oSVXapn+m4nQDvpzw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/antonk52"
++      }
++    },
++    "node_modules/lines-and-columns": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz",
++      "integrity": "sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/lodash": {
++      "version": "4.18.1",
++      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
++      "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
++      "license": "MIT"
++    },
++    "node_modules/loose-envify": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
++      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
++      "license": "MIT",
++      "dependencies": {
++        "js-tokens": "^3.0.0 || ^4.0.0"
++      },
++      "bin": {
++        "loose-envify": "cli.js"
++      }
++    },
++    "node_modules/lru-cache": {
++      "version": "5.1.1",
++      "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz",
++      "integrity": "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "yallist": "^3.0.2"
++      }
++    },
++    "node_modules/merge2": {
++      "version": "1.4.1",
++      "resolved": "https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz",
++      "integrity": "sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/micromatch": {
++      "version": "4.0.8",
++      "resolved": "https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz",
++      "integrity": "sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "braces": "^3.0.3",
++        "picomatch": "^2.3.1"
++      },
++      "engines": {
++        "node": ">=8.6"
++      }
++    },
++    "node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/mz": {
++      "version": "2.7.0",
++      "resolved": "https://registry.npmjs.org/mz/-/mz-2.7.0.tgz",
++      "integrity": "sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "any-promise": "^1.0.0",
++        "object-assign": "^4.0.1",
++        "thenify-all": "^1.0.0"
++      }
++    },
++    "node_modules/nanoid": {
++      "version": "3.3.15",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
++      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "bin": {
++        "nanoid": "bin/nanoid.cjs"
++      },
++      "engines": {
++        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      }
++    },
++    "node_modules/node-releases": {
++      "version": "2.0.50",
++      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.50.tgz",
++      "integrity": "sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/normalize-path": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
++      "integrity": "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/object-assign": {
++      "version": "4.1.1",
++      "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
++      "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/object-hash": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/object-hash/-/object-hash-3.0.0.tgz",
++      "integrity": "sha512-RSn9F68PjH9HqtltsSnqYC1XXoWe9Bju5+213R98cNGttag9q9yAOTzdbsqvIa7aNm5WffBZFpWYr2aWrklWAw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/path-parse": {
++      "version": "1.0.7",
++      "resolved": "https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz",
++      "integrity": "sha512-LDJzPVEEEPR+y48z93A0Ed0yXb8pAByGWo/k5YYdYgpY2/2EsOsksJrq7lOHxryrVOn1ejG6oAp8ahvOIQD8sw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/picocolors": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
++      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
++      "dev": true,
++      "license": "ISC"
++    },
++    "node_modules/picomatch": {
++      "version": "2.3.2",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
++      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=8.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
++    "node_modules/pify": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/pify/-/pify-2.3.0.tgz",
++      "integrity": "sha512-udgsAY+fTnvv7kI7aaxbqwWNb0AHiB0qBO89PZKPkoTmGOgdbrHDKD+0B2X4uTfJ/FT1R09r9gTsjUjNJotuog==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/pirates": {
++      "version": "4.0.7",
++      "resolved": "https://registry.npmjs.org/pirates/-/pirates-4.0.7.tgz",
++      "integrity": "sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 6"
++      }
++    },
++    "node_modules/postcss": {
++      "version": "8.5.16",
++      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.16.tgz",
++      "integrity": "sha512-vuwillviilfKZsg0VGj5R/YwwcHx4SLsIOI/7K6mQkWx+l5cUHTjj5g0AasTBcyXsbfTgrwsUNmVUb5xVwyPwg==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/postcss"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "nanoid": "^3.3.12",
++        "picocolors": "^1.1.1",
++        "source-map-js": "^1.2.1"
++      },
++      "engines": {
++        "node": "^10 || ^12 || >=14"
++      }
++    },
++    "node_modules/postcss-import": {
++      "version": "15.1.0",
++      "resolved": "https://registry.npmjs.org/postcss-import/-/postcss-import-15.1.0.tgz",
++      "integrity": "sha512-hpr+J05B2FVYUAXHeK1YyI267J/dDDhMU6B6civm8hSY1jYJnBXxzKDKDswzJmtLHryrjhnDjqqp/49t8FALew==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "postcss-value-parser": "^4.0.0",
++        "read-cache": "^1.0.0",
++        "resolve": "^1.1.7"
++      },
++      "engines": {
++        "node": ">=14.0.0"
++      },
++      "peerDependencies": {
++        "postcss": "^8.0.0"
++      }
++    },
++    "node_modules/postcss-js": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/postcss-js/-/postcss-js-4.1.0.tgz",
++      "integrity": "sha512-oIAOTqgIo7q2EOwbhb8UalYePMvYoIeRY2YKntdpFQXNosSu3vLrniGgmH9OKs/qAkfoj5oB3le/7mINW1LCfw==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "camelcase-css": "^2.0.1"
++      },
++      "engines": {
++        "node": "^12 || ^14 || >= 16"
++      },
++      "peerDependencies": {
++        "postcss": "^8.4.21"
++      }
++    },
++    "node_modules/postcss-load-config": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/postcss-load-config/-/postcss-load-config-6.0.1.tgz",
++      "integrity": "sha512-oPtTM4oerL+UXmx+93ytZVN82RrlY/wPUV8IeDxFrzIjXOLF1pN+EmKPLbubvKHT2HC20xXsCAH2Z+CKV6Oz/g==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "lilconfig": "^3.1.1"
++      },
++      "engines": {
++        "node": ">= 18"
++      },
++      "peerDependencies": {
++        "jiti": ">=1.21.0",
++        "postcss": ">=8.0.9",
++        "tsx": "^4.8.1",
++        "yaml": "^2.4.2"
++      },
++      "peerDependenciesMeta": {
++        "jiti": {
++          "optional": true
++        },
++        "postcss": {
++          "optional": true
++        },
++        "tsx": {
++          "optional": true
++        },
++        "yaml": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/postcss-nested": {
++      "version": "6.2.0",
++      "resolved": "https://registry.npmjs.org/postcss-nested/-/postcss-nested-6.2.0.tgz",
++      "integrity": "sha512-HQbt28KulC5AJzG+cZtj9kvKB93CFCdLvog1WFLf1D+xmMvPGlBstkpTEZfK5+AN9hfJocyBFCNiqyS48bpgzQ==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "postcss-selector-parser": "^6.1.1"
++      },
++      "engines": {
++        "node": ">=12.0"
++      },
++      "peerDependencies": {
++        "postcss": "^8.2.14"
++      }
++    },
++    "node_modules/postcss-selector-parser": {
++      "version": "6.1.4",
++      "resolved": "https://registry.npmjs.org/postcss-selector-parser/-/postcss-selector-parser-6.1.4.tgz",
++      "integrity": "sha512-bIoJLOmjCO1S9XdY/DcnR5hJxvrDir1PbGChrzXG3vw0/FOliy/fA3dmdhQ441kah4gKv+TwckGzex6wNS5cnQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "cssesc": "^3.0.0",
++        "util-deprecate": "^1.0.2"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/postcss-value-parser": {
++      "version": "4.2.0",
++      "resolved": "https://registry.npmjs.org/postcss-value-parser/-/postcss-value-parser-4.2.0.tgz",
++      "integrity": "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/prop-types": {
++      "version": "15.8.1",
++      "resolved": "https://registry.npmjs.org/prop-types/-/prop-types-15.8.1.tgz",
++      "integrity": "sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==",
++      "license": "MIT",
++      "dependencies": {
++        "loose-envify": "^1.4.0",
++        "object-assign": "^4.1.1",
++        "react-is": "^16.13.1"
++      }
++    },
++    "node_modules/prop-types/node_modules/react-is": {
++      "version": "16.13.1",
++      "resolved": "https://registry.npmjs.org/react-is/-/react-is-16.13.1.tgz",
++      "integrity": "sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==",
++      "license": "MIT"
++    },
++    "node_modules/queue-microtask": {
++      "version": "1.2.3",
++      "resolved": "https://registry.npmjs.org/queue-microtask/-/queue-microtask-1.2.3.tgz",
++      "integrity": "sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/feross"
++        },
++        {
++          "type": "patreon",
++          "url": "https://www.patreon.com/feross"
++        },
++        {
++          "type": "consulting",
++          "url": "https://feross.org/support"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/react": {
++      "version": "18.3.1",
++      "resolved": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
++      "integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
++      "license": "MIT",
++      "dependencies": {
++        "loose-envify": "^1.1.0"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/react-dom": {
++      "version": "18.3.1",
++      "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz",
++      "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
++      "license": "MIT",
++      "dependencies": {
++        "loose-envify": "^1.1.0",
++        "scheduler": "^0.23.2"
++      },
++      "peerDependencies": {
++        "react": "^18.3.1"
++      }
++    },
++    "node_modules/react-is": {
++      "version": "18.3.1",
++      "resolved": "https://registry.npmjs.org/react-is/-/react-is-18.3.1.tgz",
++      "integrity": "sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==",
++      "license": "MIT"
++    },
++    "node_modules/react-refresh": {
++      "version": "0.17.0",
++      "resolved": "https://registry.npmjs.org/react-refresh/-/react-refresh-0.17.0.tgz",
++      "integrity": "sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/react-router": {
++      "version": "6.30.4",
++      "resolved": "https://registry.npmjs.org/react-router/-/react-router-6.30.4.tgz",
++      "integrity": "sha512-SVUsDe+DybHM/WmYKIVYhZh1o5Dcuf16yM6WjG02Q9XVFMZIJyHYhwrr6bFBXZkVP6z69kNkMyBCujt8FaFLJA==",
++      "license": "MIT",
++      "dependencies": {
++        "@remix-run/router": "1.23.3"
++      },
++      "engines": {
++        "node": ">=14.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=16.8"
++      }
++    },
++    "node_modules/react-router-dom": {
++      "version": "6.30.4",
++      "resolved": "https://registry.npmjs.org/react-router-dom/-/react-router-dom-6.30.4.tgz",
++      "integrity": "sha512-q4HvNl+mmDdkS0g+MqiBZNteQJCuimWoOyHMy4T/RQLAn9Z29+E91QXRaxOujeMl2HTzRSS0KFPd7lxX3PjV0Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@remix-run/router": "1.23.3",
++        "react-router": "6.30.4"
++      },
++      "engines": {
++        "node": ">=14.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=16.8",
++        "react-dom": ">=16.8"
++      }
++    },
++    "node_modules/react-smooth": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/react-smooth/-/react-smooth-4.0.4.tgz",
++      "integrity": "sha512-gnGKTpYwqL0Iii09gHobNolvX4Kiq4PKx6eWBCYYix+8cdw+cGo3do906l1NBPKkSWx1DghC1dlWG9L2uGd61Q==",
++      "license": "MIT",
++      "dependencies": {
++        "fast-equals": "^5.0.1",
++        "prop-types": "^15.8.1",
++        "react-transition-group": "^4.4.5"
++      },
++      "peerDependencies": {
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
++        "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/react-transition-group": {
++      "version": "4.4.5",
++      "resolved": "https://registry.npmjs.org/react-transition-group/-/react-transition-group-4.4.5.tgz",
++      "integrity": "sha512-pZcd1MCJoiKiBR2NRxeCRg13uCXbydPnmB4EOeRrY7480qNWO8IIgQG6zlDkm6uRMsURXPuKq0GWtiM59a5Q6g==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "@babel/runtime": "^7.5.5",
++        "dom-helpers": "^5.0.1",
++        "loose-envify": "^1.4.0",
++        "prop-types": "^15.6.2"
++      },
++      "peerDependencies": {
++        "react": ">=16.6.0",
++        "react-dom": ">=16.6.0"
++      }
++    },
++    "node_modules/read-cache": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/read-cache/-/read-cache-1.0.0.tgz",
++      "integrity": "sha512-Owdv/Ft7IjOgm/i0xvNDZ1LrRANRfew4b2prF3OWMQLxLfu3bS8FVhCsrSCMK4lR56Y9ya+AThoTpDCTxCmpRA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "pify": "^2.3.0"
++      }
++    },
++    "node_modules/readdirp": {
++      "version": "3.6.0",
++      "resolved": "https://registry.npmjs.org/readdirp/-/readdirp-3.6.0.tgz",
++      "integrity": "sha512-hOS089on8RduqdbhvQ5Z37A0ESjsqz6qnRcffsMU3495FuTdqSm+7bhJ29JvIOsBDEEnan5DPu9t3To9VRlMzA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "picomatch": "^2.2.1"
++      },
++      "engines": {
++        "node": ">=8.10.0"
++      }
++    },
++    "node_modules/recharts": {
++      "version": "2.15.4",
++      "resolved": "https://registry.npmjs.org/recharts/-/recharts-2.15.4.tgz",
++      "integrity": "sha512-UT/q6fwS3c1dHbXv2uFgYJ9BMFHu3fwnd7AYZaEQhXuYQ4hgsxLvsUXzGdKeZrW5xopzDCvuA2N41WJ88I7zIw==",
++      "deprecated": "1.x and 2.x branches are no longer active. Bump to Recharts v3 to receive latest features and bugfixes. See https://github.com/recharts/recharts/wiki/3.0-migration-guide",
++      "license": "MIT",
++      "dependencies": {
++        "clsx": "^2.0.0",
++        "eventemitter3": "^4.0.1",
++        "lodash": "^4.17.21",
++        "react-is": "^18.3.1",
++        "react-smooth": "^4.0.4",
++        "recharts-scale": "^0.4.4",
++        "tiny-invariant": "^1.3.1",
++        "victory-vendor": "^36.6.8"
++      },
++      "engines": {
++        "node": ">=14"
++      },
++      "peerDependencies": {
++        "react": "^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
++        "react-dom": "^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/recharts-scale": {
++      "version": "0.4.5",
++      "resolved": "https://registry.npmjs.org/recharts-scale/-/recharts-scale-0.4.5.tgz",
++      "integrity": "sha512-kivNFO+0OcUNu7jQquLXAxz1FIwZj8nrj+YkOKc5694NbjCvcT6aSZiIzNzd2Kul4o4rTto8QVR9lMNtxD4G1w==",
++      "license": "MIT",
++      "dependencies": {
++        "decimal.js-light": "^2.4.1"
++      }
++    },
++    "node_modules/resolve": {
++      "version": "1.22.12",
++      "resolved": "https://registry.npmjs.org/resolve/-/resolve-1.22.12.tgz",
++      "integrity": "sha512-TyeJ1zif53BPfHootBGwPRYT1RUt6oGWsaQr8UyZW/eAm9bKoijtvruSDEmZHm92CwS9nj7/fWttqPCgzep8CA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "is-core-module": "^2.16.1",
++        "path-parse": "^1.0.7",
++        "supports-preserve-symlinks-flag": "^1.0.0"
++      },
++      "bin": {
++        "resolve": "bin/resolve"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/reusify": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/reusify/-/reusify-1.1.0.tgz",
++      "integrity": "sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "iojs": ">=1.0.0",
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/rollup": {
++      "version": "4.62.2",
++      "resolved": "https://registry.npmjs.org/rollup/-/rollup-4.62.2.tgz",
++      "integrity": "sha512-RFnrW4lhXA3s3eqHDZvN654g8OTjzRfqpIRJYczCGB6HzphckVAi/Qh4tbPUbRuDi7s1Llv8g/NspLkttY3gTA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "1.0.9"
++      },
++      "bin": {
++        "rollup": "dist/bin/rollup"
++      },
++      "engines": {
++        "node": ">=18.0.0",
++        "npm": ">=8.0.0"
++      },
++      "optionalDependencies": {
++        "@rollup/rollup-android-arm-eabi": "4.62.2",
++        "@rollup/rollup-android-arm64": "4.62.2",
++        "@rollup/rollup-darwin-arm64": "4.62.2",
++        "@rollup/rollup-darwin-x64": "4.62.2",
++        "@rollup/rollup-freebsd-arm64": "4.62.2",
++        "@rollup/rollup-freebsd-x64": "4.62.2",
++        "@rollup/rollup-linux-arm-gnueabihf": "4.62.2",
++        "@rollup/rollup-linux-arm-musleabihf": "4.62.2",
++        "@rollup/rollup-linux-arm64-gnu": "4.62.2",
++        "@rollup/rollup-linux-arm64-musl": "4.62.2",
++        "@rollup/rollup-linux-loong64-gnu": "4.62.2",
++        "@rollup/rollup-linux-loong64-musl": "4.62.2",
++        "@rollup/rollup-linux-ppc64-gnu": "4.62.2",
++        "@rollup/rollup-linux-ppc64-musl": "4.62.2",
++        "@rollup/rollup-linux-riscv64-gnu": "4.62.2",
++        "@rollup/rollup-linux-riscv64-musl": "4.62.2",
++        "@rollup/rollup-linux-s390x-gnu": "4.62.2",
++        "@rollup/rollup-linux-x64-gnu": "4.62.2",
++        "@rollup/rollup-linux-x64-musl": "4.62.2",
++        "@rollup/rollup-openbsd-x64": "4.62.2",
++        "@rollup/rollup-openharmony-arm64": "4.62.2",
++        "@rollup/rollup-win32-arm64-msvc": "4.62.2",
++        "@rollup/rollup-win32-ia32-msvc": "4.62.2",
++        "@rollup/rollup-win32-x64-gnu": "4.62.2",
++        "@rollup/rollup-win32-x64-msvc": "4.62.2",
++        "fsevents": "~2.3.2"
++      }
++    },
++    "node_modules/run-parallel": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/run-parallel/-/run-parallel-1.2.0.tgz",
++      "integrity": "sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/feross"
++        },
++        {
++          "type": "patreon",
++          "url": "https://www.patreon.com/feross"
++        },
++        {
++          "type": "consulting",
++          "url": "https://feross.org/support"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "queue-microtask": "^1.2.2"
++      }
++    },
++    "node_modules/scheduler": {
++      "version": "0.23.2",
++      "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.23.2.tgz",
++      "integrity": "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==",
++      "license": "MIT",
++      "dependencies": {
++        "loose-envify": "^1.1.0"
++      }
++    },
++    "node_modules/semver": {
++      "version": "6.3.1",
++      "resolved": "https://registry.npmjs.org/semver/-/semver-6.3.1.tgz",
++      "integrity": "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==",
++      "dev": true,
++      "license": "ISC",
++      "bin": {
++        "semver": "bin/semver.js"
++      }
++    },
++    "node_modules/source-map-js": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
++      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/sucrase": {
++      "version": "3.35.1",
++      "resolved": "https://registry.npmjs.org/sucrase/-/sucrase-3.35.1.tgz",
++      "integrity": "sha512-DhuTmvZWux4H1UOnWMB3sk0sbaCVOoQZjv8u1rDoTV0HTdGem9hkAZtl4JZy8P2z4Bg0nT+YMeOFyVr4zcG5Tw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/gen-mapping": "^0.3.2",
++        "commander": "^4.0.0",
++        "lines-and-columns": "^1.1.6",
++        "mz": "^2.7.0",
++        "pirates": "^4.0.1",
++        "tinyglobby": "^0.2.11",
++        "ts-interface-checker": "^0.1.9"
++      },
++      "bin": {
++        "sucrase": "bin/sucrase",
++        "sucrase-node": "bin/sucrase-node"
++      },
++      "engines": {
++        "node": ">=16 || 14 >=14.17"
++      }
++    },
++    "node_modules/supports-preserve-symlinks-flag": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz",
++      "integrity": "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/tailwindcss": {
++      "version": "3.4.19",
++      "resolved": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-3.4.19.tgz",
++      "integrity": "sha512-3ofp+LL8E+pK/JuPLPggVAIaEuhvIz4qNcf3nA1Xn2o/7fb7s/TYpHhwGDv1ZU3PkBluUVaF8PyCHcm48cKLWQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@alloc/quick-lru": "^5.2.0",
++        "arg": "^5.0.2",
++        "chokidar": "^3.6.0",
++        "didyoumean": "^1.2.2",
++        "dlv": "^1.1.3",
++        "fast-glob": "^3.3.2",
++        "glob-parent": "^6.0.2",
++        "is-glob": "^4.0.3",
++        "jiti": "^1.21.7",
++        "lilconfig": "^3.1.3",
++        "micromatch": "^4.0.8",
++        "normalize-path": "^3.0.0",
++        "object-hash": "^3.0.0",
++        "picocolors": "^1.1.1",
++        "postcss": "^8.4.47",
++        "postcss-import": "^15.1.0",
++        "postcss-js": "^4.0.1",
++        "postcss-load-config": "^4.0.2 || ^5.0 || ^6.0",
++        "postcss-nested": "^6.2.0",
++        "postcss-selector-parser": "^6.1.2",
++        "resolve": "^1.22.8",
++        "sucrase": "^3.35.0"
++      },
++      "bin": {
++        "tailwind": "lib/cli.js",
++        "tailwindcss": "lib/cli.js"
++      },
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
++    "node_modules/thenify": {
++      "version": "3.3.1",
++      "resolved": "https://registry.npmjs.org/thenify/-/thenify-3.3.1.tgz",
++      "integrity": "sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "any-promise": "^1.0.0"
++      }
++    },
++    "node_modules/thenify-all": {
++      "version": "1.6.0",
++      "resolved": "https://registry.npmjs.org/thenify-all/-/thenify-all-1.6.0.tgz",
++      "integrity": "sha512-RNxQH/qI8/t3thXJDwcstUO4zeqo64+Uy/+sNVRBx4Xn2OX+OZ9oP+iJnNFqplFra2ZUVeKCSa2oVWi3T4uVmA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "thenify": ">= 3.1.0 < 4"
++      },
++      "engines": {
++        "node": ">=0.8"
++      }
++    },
++    "node_modules/tiny-invariant": {
++      "version": "1.3.3",
++      "resolved": "https://registry.npmjs.org/tiny-invariant/-/tiny-invariant-1.3.3.tgz",
++      "integrity": "sha512-+FbBPE1o9QAYvviau/qC5SE3caw21q3xkvWKBtja5vgqOWIHHJ3ioaq1VPfn/Szqctz2bU/oYeKd9/z5BL+PVg==",
++      "license": "MIT"
++    },
++    "node_modules/tinyglobby": {
++      "version": "0.2.17",
++      "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
++      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "fdir": "^6.5.0",
++        "picomatch": "^4.0.4"
++      },
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/SuperchupuDev"
++      }
++    },
++    "node_modules/tinyglobby/node_modules/fdir": {
++      "version": "6.5.0",
++      "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
++      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "peerDependencies": {
++        "picomatch": "^3 || ^4"
++      },
++      "peerDependenciesMeta": {
++        "picomatch": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/tinyglobby/node_modules/picomatch": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
++      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
++    "node_modules/to-regex-range": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz",
++      "integrity": "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "is-number": "^7.0.0"
++      },
++      "engines": {
++        "node": ">=8.0"
++      }
++    },
++    "node_modules/ts-interface-checker": {
++      "version": "0.1.13",
++      "resolved": "https://registry.npmjs.org/ts-interface-checker/-/ts-interface-checker-0.1.13.tgz",
++      "integrity": "sha512-Y/arvbn+rrz3JCKl9C4kVNfTfSm2/mEp5FSz5EsZSANGPSlQrpRI5M4PKF+mJnE52jOO90PnPSc3Ur3bTQw0gA==",
++      "dev": true,
++      "license": "Apache-2.0"
++    },
++    "node_modules/tslib": {
++      "version": "2.8.1",
++      "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
++      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
++      "license": "0BSD"
++    },
++    "node_modules/typescript": {
++      "version": "5.9.3",
++      "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
++      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "tsc": "bin/tsc",
++        "tsserver": "bin/tsserver"
++      },
++      "engines": {
++        "node": ">=14.17"
++      }
++    },
++    "node_modules/update-browserslist-db": {
++      "version": "1.2.3",
++      "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.2.3.tgz",
++      "integrity": "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/browserslist"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/browserslist"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "escalade": "^3.2.0",
++        "picocolors": "^1.1.1"
++      },
++      "bin": {
++        "update-browserslist-db": "cli.js"
++      },
++      "peerDependencies": {
++        "browserslist": ">= 4.21.0"
++      }
++    },
++    "node_modules/util-deprecate": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
++      "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/victory-vendor": {
++      "version": "36.9.2",
++      "resolved": "https://registry.npmjs.org/victory-vendor/-/victory-vendor-36.9.2.tgz",
++      "integrity": "sha512-PnpQQMuxlwYdocC8fIJqVXvkeViHYzotI+NJrCuav0ZYFoq912ZHBk3mCeuj+5/VpodOjPe1z0Fk2ihgzlXqjQ==",
++      "license": "MIT AND ISC",
++      "dependencies": {
++        "@types/d3-array": "^3.0.3",
++        "@types/d3-ease": "^3.0.0",
++        "@types/d3-interpolate": "^3.0.1",
++        "@types/d3-scale": "^4.0.2",
++        "@types/d3-shape": "^3.1.0",
++        "@types/d3-time": "^3.0.0",
++        "@types/d3-timer": "^3.0.0",
++        "d3-array": "^3.1.6",
++        "d3-ease": "^3.0.1",
++        "d3-interpolate": "^3.0.1",
++        "d3-scale": "^4.0.2",
++        "d3-shape": "^3.1.0",
++        "d3-time": "^3.0.0",
++        "d3-timer": "^3.0.1"
++      }
++    },
++    "node_modules/vite": {
++      "version": "5.4.21",
++      "resolved": "https://registry.npmjs.org/vite/-/vite-5.4.21.tgz",
++      "integrity": "sha512-o5a9xKjbtuhY6Bi5S3+HvbRERmouabWbyUcpXXUA1u+GNUKoROi9byOJ8M0nHbHYHkYICiMlqxkg1KkYmm25Sw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "esbuild": "^0.21.3",
++        "postcss": "^8.4.43",
++        "rollup": "^4.20.0"
++      },
++      "bin": {
++        "vite": "bin/vite.js"
++      },
++      "engines": {
++        "node": "^18.0.0 || >=20.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/vitejs/vite?sponsor=1"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.3"
++      },
++      "peerDependencies": {
++        "@types/node": "^18.0.0 || >=20.0.0",
++        "less": "*",
++        "lightningcss": "^1.21.0",
++        "sass": "*",
++        "sass-embedded": "*",
++        "stylus": "*",
++        "sugarss": "*",
++        "terser": "^5.4.0"
++      },
++      "peerDependenciesMeta": {
++        "@types/node": {
++          "optional": true
++        },
++        "less": {
++          "optional": true
++        },
++        "lightningcss": {
++          "optional": true
++        },
++        "sass": {
++          "optional": true
++        },
++        "sass-embedded": {
++          "optional": true
++        },
++        "stylus": {
++          "optional": true
++        },
++        "sugarss": {
++          "optional": true
++        },
++        "terser": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/yallist": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/yallist/-/yallist-3.1.1.tgz",
++      "integrity": "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==",
++      "dev": true,
++      "license": "ISC"
++    }
++  }
++}
+diff --git a/package.json b/package.json
+new file mode 100644
+index 0000000..6812a24
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,31 @@
++{
++  "name": "leetcode-tracker",
++  "private": true,
++  "version": "0.1.0",
++  "type": "module",
++  "scripts": {
++    "dev": "vite",
++    "build": "tsc -b && vite build",
++    "preview": "vite preview",
++    "typecheck": "tsc -b --noEmit"
++  },
++  "dependencies": {
++    "@supabase/supabase-js": "^2.45.4",
++    "dexie": "^4.0.8",
++    "dexie-react-hooks": "^1.1.7",
++    "react": "^18.3.1",
++    "react-dom": "^18.3.1",
++    "react-router-dom": "^6.26.2",
++    "recharts": "^2.12.7"
++  },
++  "devDependencies": {
++    "@types/react": "^18.3.5",
++    "@types/react-dom": "^18.3.0",
++    "@vitejs/plugin-react": "^4.3.1",
++    "autoprefixer": "^10.4.20",
++    "postcss": "^8.4.45",
++    "tailwindcss": "^3.4.10",
++    "typescript": "^5.5.4",
++    "vite": "^5.4.3"
++  }
++}
+diff --git a/postcss.config.js b/postcss.config.js
+new file mode 100644
+index 0000000..2e7af2b
+--- /dev/null
++++ b/postcss.config.js
+@@ -0,0 +1,6 @@
++export default {
++  plugins: {
++    tailwindcss: {},
++    autoprefixer: {},
++  },
++}
+diff --git a/src/App.tsx b/src/App.tsx
+new file mode 100644
+index 0000000..220b41e
+--- /dev/null
++++ b/src/App.tsx
+@@ -0,0 +1,63 @@
++import { useEffect, useState } from 'react'
++import { NavLink, Route, Routes } from 'react-router-dom'
++import { syncAll } from './lib/db'
++import { isSupabaseConfigured } from './lib/supabase'
++import Dashboard from './pages/Dashboard'
++import Problems from './pages/Problems'
++import ProblemDetail from './pages/ProblemDetail'
++
++function NavItem({ to, label }: { to: string; label: string }) {
++  return (
++    <NavLink
++      to={to}
++      end={to === '/'}
++      className={({ isActive }) =>
++        `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
++          isActive
++            ? 'bg-slate-900 text-white'
++            : 'text-slate-600 hover:bg-slate-200'
++        }`
++      }
++    >
++      {label}
++    </NavLink>
++  )
++}
++
++export default function App() {
++  const [synced, setSynced] = useState(false)
++
++  // 앱 시작 시 1회 동기화 (push dirty → pull remote).
++  useEffect(() => {
++    syncAll().finally(() => setSynced(true))
++  }, [])
++
++  return (
++    <div className="min-h-screen flex flex-col">
++      <header className="border-b border-slate-200 bg-white sticky top-0 z-10">
++        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-2">
++          <span className="font-bold text-lg mr-4">📘 LeetCode 트래커</span>
++          <nav className="flex gap-1">
++            <NavItem to="/" label="대시보드" />
++            <NavItem to="/problems" label="문제" />
++          </nav>
++          <div className="ml-auto text-xs text-slate-400">
++            {isSupabaseConfigured
++              ? synced
++                ? '☁️ 동기화됨'
++                : '동기화 중…'
++              : '💾 로컬 전용'}
++          </div>
++        </div>
++      </header>
++
++      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6">
++        <Routes>
++          <Route path="/" element={<Dashboard />} />
++          <Route path="/problems" element={<Problems />} />
++          <Route path="/problems/:id" element={<ProblemDetail />} />
++        </Routes>
++      </main>
++    </div>
++  )
++}
+diff --git a/src/components/Badges.tsx b/src/components/Badges.tsx
+new file mode 100644
+index 0000000..5aba6cd
+--- /dev/null
++++ b/src/components/Badges.tsx
+@@ -0,0 +1,41 @@
++// 난이도 / 상태 배지 — 목록·상세·대시보드에서 공용으로 사용.
++import {
++  DIFFICULTY_LABELS,
++  STATUS_LABELS,
++  type Difficulty,
++  type Status,
++} from '../types'
++
++const DIFFICULTY_CLASS: Record<Difficulty, string> = {
++  easy: 'bg-emerald-100 text-emerald-700',
++  medium: 'bg-amber-100 text-amber-700',
++  hard: 'bg-rose-100 text-rose-700',
++}
++
++const STATUS_CLASS: Record<Status, string> = {
++  todo: 'bg-slate-100 text-slate-600',
++  solving: 'bg-blue-100 text-blue-700',
++  solved: 'bg-emerald-100 text-emerald-700',
++  review: 'bg-violet-100 text-violet-700',
++}
++
++export function DifficultyBadge({ value }: { value: Difficulty | null }) {
++  if (!value) return null
++  return (
++    <span
++      className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${DIFFICULTY_CLASS[value]}`}
++    >
++      {DIFFICULTY_LABELS[value]}
++    </span>
++  )
++}
++
++export function StatusBadge({ value }: { value: Status }) {
++  return (
++    <span
++      className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_CLASS[value]}`}
++    >
++      {STATUS_LABELS[value]}
++    </span>
++  )
++}
+diff --git a/src/components/ProblemForm.tsx b/src/components/ProblemForm.tsx
+new file mode 100644
+index 0000000..0c3747a
+--- /dev/null
++++ b/src/components/ProblemForm.tsx
+@@ -0,0 +1,230 @@
++// 문제 생성/수정 폼. 생성과 수정 양쪽에서 재사용.
++import { useState } from 'react'
++import {
++  DIFFICULTIES,
++  DIFFICULTY_LABELS,
++  STATUS_LABELS,
++  STATUSES,
++  type Problem,
++  type ProblemInput,
++} from '../types'
++
++interface Props {
++  initial?: Problem
++  onSubmit: (input: ProblemInput) => void | Promise<void>
++  onCancel?: () => void
++  submitLabel?: string
++}
++
++const field = 'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400'
++const label = 'block text-xs font-medium text-slate-500 mb-1'
++
++export default function ProblemForm({
++  initial,
++  onSubmit,
++  onCancel,
++  submitLabel = '저장',
++}: Props) {
++  const [number, setNumber] = useState(initial?.number?.toString() ?? '')
++  const [title, setTitle] = useState(initial?.title ?? '')
++  const [url, setUrl] = useState(initial?.url ?? '')
++  const [difficulty, setDifficulty] = useState(initial?.difficulty ?? 'easy')
++  const [status, setStatus] = useState(initial?.status ?? 'todo')
++  const [tags, setTags] = useState(initial?.tags?.join(', ') ?? '')
++  const [language, setLanguage] = useState(initial?.language ?? 'python')
++  const [code, setCode] = useState(initial?.code ?? '')
++  const [notes, setNotes] = useState(initial?.notes ?? '')
++  const [timeC, setTimeC] = useState(initial?.time_complexity ?? '')
++  const [spaceC, setSpaceC] = useState(initial?.space_complexity ?? '')
++  const [perceived, setPerceived] = useState(
++    initial?.perceived_difficulty?.toString() ?? '',
++  )
++  const [saving, setSaving] = useState(false)
++
++  async function handleSubmit(e: React.FormEvent) {
++    e.preventDefault()
++    if (!title.trim()) return
++    setSaving(true)
++    const input: ProblemInput = {
++      number: number.trim() ? parseInt(number, 10) : null,
++      title: title.trim(),
++      url: url.trim() || null,
++      difficulty,
++      status,
++      tags: tags
++        .split(',')
++        .map((t) => t.trim())
++        .filter(Boolean),
++      language: language.trim() || 'python',
++      code: code || null,
++      notes: notes || null,
++      time_complexity: timeC.trim() || null,
++      space_complexity: spaceC.trim() || null,
++      perceived_difficulty: perceived ? parseInt(perceived, 10) : null,
++    }
++    try {
++      await onSubmit(input)
++    } finally {
++      setSaving(false)
++    }
++  }
++
++  return (
++    <form onSubmit={handleSubmit} className="space-y-4">
++      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
++        <div>
++          <label className={label}>번호</label>
++          <input
++            className={field}
++            value={number}
++            onChange={(e) => setNumber(e.target.value)}
++            placeholder="예: 1"
++            inputMode="numeric"
++          />
++        </div>
++        <div className="sm:col-span-3">
++          <label className={label}>제목 *</label>
++          <input
++            className={field}
++            value={title}
++            onChange={(e) => setTitle(e.target.value)}
++            placeholder="Two Sum"
++            required
++          />
++        </div>
++      </div>
++
++      <div>
++        <label className={label}>URL</label>
++        <input
++          className={field}
++          value={url}
++          onChange={(e) => setUrl(e.target.value)}
++          placeholder="https://leetcode.com/problems/two-sum/"
++        />
++      </div>
++
++      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
++        <div>
++          <label className={label}>난이도</label>
++          <select
++            className={field}
++            value={difficulty}
++            onChange={(e) => setDifficulty(e.target.value as typeof difficulty)}
++          >
++            {DIFFICULTIES.map((d) => (
++              <option key={d} value={d}>
++                {DIFFICULTY_LABELS[d]}
++              </option>
++            ))}
++          </select>
++        </div>
++        <div>
++          <label className={label}>상태</label>
++          <select
++            className={field}
++            value={status}
++            onChange={(e) => setStatus(e.target.value as typeof status)}
++          >
++            {STATUSES.map((s) => (
++              <option key={s} value={s}>
++                {STATUS_LABELS[s]}
++              </option>
++            ))}
++          </select>
++        </div>
++        <div>
++          <label className={label}>언어</label>
++          <input
++            className={field}
++            value={language}
++            onChange={(e) => setLanguage(e.target.value)}
++            placeholder="python"
++          />
++        </div>
++        <div>
++          <label className={label}>체감 난이도 (1~5)</label>
++          <input
++            className={field}
++            value={perceived}
++            onChange={(e) => setPerceived(e.target.value)}
++            placeholder="3"
++            inputMode="numeric"
++          />
++        </div>
++      </div>
++
++      <div>
++        <label className={label}>태그 (쉼표로 구분)</label>
++        <input
++          className={field}
++          value={tags}
++          onChange={(e) => setTags(e.target.value)}
++          placeholder="array, hash-table"
++        />
++      </div>
++
++      <div className="grid grid-cols-2 gap-3">
++        <div>
++          <label className={label}>시간 복잡도</label>
++          <input
++            className={field}
++            value={timeC}
++            onChange={(e) => setTimeC(e.target.value)}
++            placeholder="O(n)"
++          />
++        </div>
++        <div>
++          <label className={label}>공간 복잡도</label>
++          <input
++            className={field}
++            value={spaceC}
++            onChange={(e) => setSpaceC(e.target.value)}
++            placeholder="O(n)"
++          />
++        </div>
++      </div>
++
++      <div>
++        <label className={label}>풀이 코드</label>
++        <textarea
++          className={`${field} font-mono`}
++          value={code}
++          onChange={(e) => setCode(e.target.value)}
++          rows={8}
++          placeholder="class Solution:&#10;    def twoSum(self, nums, target):"
++        />
++      </div>
++
++      <div>
++        <label className={label}>메모</label>
++        <textarea
++          className={field}
++          value={notes}
++          onChange={(e) => setNotes(e.target.value)}
++          rows={4}
++          placeholder="접근법, 막혔던 부분, 핵심 아이디어…"
++        />
++      </div>
++
++      <div className="flex gap-2 justify-end">
++        {onCancel && (
++          <button
++            type="button"
++            onClick={onCancel}
++            className="px-4 py-2 rounded-md text-sm font-medium border border-slate-300 hover:bg-slate-100"
++          >
++            취소
++          </button>
++        )}
++        <button
++          type="submit"
++          disabled={saving}
++          className="px-4 py-2 rounded-md text-sm font-medium bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
++        >
++          {saving ? '저장 중…' : submitLabel}
++        </button>
++      </div>
++    </form>
++  )
++}
+diff --git a/src/hooks/useProblems.ts b/src/hooks/useProblems.ts
+new file mode 100644
+index 0000000..9c22fc8
+--- /dev/null
++++ b/src/hooks/useProblems.ts
+@@ -0,0 +1,89 @@
++// 문제 CRUD + local-first 동기화 훅.
++// 읽기는 Dexie useLiveQuery 로 반응형, 쓰기는 Dexie 즉시 반영 후 백그라운드 push.
++
++import { useLiveQuery } from 'dexie-react-hooks'
++import { db, pushProblem, deleteRemoteProblem, type LocalProblem } from '../lib/db'
++import type { Problem, ProblemInput } from '../types'
++
++const now = () => new Date().toISOString()
++
++function newId(): string {
++  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
++    return crypto.randomUUID()
++  }
++  // 폴백 (구형 환경)
++  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
++    const r = (Math.random() * 16) | 0
++    const v = c === 'x' ? r : (r & 0x3) | 0x8
++    return v.toString(16)
++  })
++}
++
++/** 전체 문제 목록 (삭제 대기 제외), updated_at 역순 정렬. */
++export function useProblems(): Problem[] | undefined {
++  return useLiveQuery(async () => {
++    const all = await db.problems.filter((p) => p._deleted !== true).toArray()
++    return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
++  }, [])
++}
++
++/** 단일 문제 조회. */
++export function useProblem(id: string | undefined): Problem | undefined {
++  return useLiveQuery(
++    async () => (id ? await db.problems.get(id) : undefined),
++    [id],
++  )
++}
++
++/** 새 문제 생성. 생성된 id 반환. */
++export async function createProblem(input: ProblemInput): Promise<string> {
++  const ts = now()
++  const record: LocalProblem = {
++    id: newId(),
++    ...input,
++    first_solved_at:
++      input.status === 'solved' || input.status === 'review' ? ts : null,
++    ease_factor: 2.5,
++    interval_days: 0,
++    repetitions: 0,
++    due_date: null,
++    last_reviewed_at: null,
++    created_at: ts,
++    updated_at: ts,
++    _synced: false,
++    _deleted: false,
++  }
++  await db.problems.put(record)
++  void pushProblem(record)
++  return record.id
++}
++
++/** 기존 문제 수정. */
++export async function updateProblem(
++  id: string,
++  patch: Partial<ProblemInput>,
++): Promise<void> {
++  const existing = await db.problems.get(id)
++  if (!existing) return
++
++  const becameSolved =
++    !existing.first_solved_at &&
++    (patch.status === 'solved' || patch.status === 'review')
++
++  const updated: LocalProblem = {
++    ...existing,
++    ...patch,
++    first_solved_at: becameSolved ? now() : existing.first_solved_at,
++    updated_at: now(),
++    _synced: false,
++  }
++  await db.problems.put(updated)
++  void pushProblem(updated)
++}
++
++/** 문제 삭제 (로컬 즉시 + 클라우드 반영). */
++export async function deleteProblem(id: string): Promise<void> {
++  // 로컬에서는 _deleted 로 마킹 후 삭제 시도 → UI 에서 즉시 사라짐.
++  await db.problems.update(id, { _deleted: true, updated_at: now() })
++  void deleteRemoteProblem(id)
++}
+diff --git a/src/index.css b/src/index.css
+new file mode 100644
+index 0000000..d3bb44b
+--- /dev/null
++++ b/src/index.css
+@@ -0,0 +1,11 @@
++@tailwind base;
++@tailwind components;
++@tailwind utilities;
++
++:root {
++  color-scheme: light;
++}
++
++body {
++  @apply bg-slate-50 text-slate-900 antialiased;
++}
+diff --git a/src/lib/backup.ts b/src/lib/backup.ts
+new file mode 100644
+index 0000000..b876b73
+--- /dev/null
++++ b/src/lib/backup.ts
+@@ -0,0 +1,74 @@
++// JSON 백업: 내보내기 / 불러오기.
++// 로컬(Dexie) 데이터를 단일 JSON 파일로 내보내고, 같은 형식을 불러와 복원한다.
++// 불러오기 후에는 syncAll() 로 클라우드에도 반영할 수 있다.
++
++import { db, type LocalProblem, type LocalReviewLog } from './db'
++import type { Problem, ReviewLog } from '../types'
++
++export interface BackupFile {
++  version: number
++  exported_at: string
++  problems: Problem[]
++  review_logs: ReviewLog[]
++}
++
++const stripMeta = <T extends object>(obj: T): T => {
++  const { _synced, _deleted, ...rest } = obj as Record<string, unknown>
++  void _synced
++  void _deleted
++  return rest as T
++}
++
++/** 현재 로컬 데이터를 JSON 파일로 내려받는다. */
++export async function exportBackup(): Promise<void> {
++  const problems = (await db.problems.filter((p) => p._deleted !== true).toArray())
++    .map(stripMeta) as Problem[]
++  const review_logs = (await db.review_logs.toArray()).map(stripMeta) as ReviewLog[]
++
++  const payload: BackupFile = {
++    version: 1,
++    exported_at: new Date().toISOString(),
++    problems,
++    review_logs,
++  }
++
++  const blob = new Blob([JSON.stringify(payload, null, 2)], {
++    type: 'application/json',
++  })
++  const url = URL.createObjectURL(blob)
++  const a = document.createElement('a')
++  a.href = url
++  a.download = `leetcode-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`
++  a.click()
++  URL.revokeObjectURL(url)
++}
++
++/**
++ * JSON 파일을 읽어 로컬에 병합한다 (updated_at 최신 우선).
++ * 불러온 레코드는 _synced=false 로 표시되어 다음 동기화 때 업로드된다.
++ * @returns 가져온 문제 수
++ */
++export async function importBackup(file: File): Promise<number> {
++  const text = await file.text()
++  const parsed = JSON.parse(text) as BackupFile
++
++  if (!parsed || !Array.isArray(parsed.problems)) {
++    throw new Error('올바른 백업 파일이 아닙니다.')
++  }
++
++  let imported = 0
++  for (const p of parsed.problems) {
++    const existing = await db.problems.get(p.id)
++    if (existing && existing.updated_at >= p.updated_at) continue
++    const record: LocalProblem = { ...p, _synced: false, _deleted: false }
++    await db.problems.put(record)
++    imported++
++  }
++
++  for (const log of parsed.review_logs ?? []) {
++    const record: LocalReviewLog = { ...log, _synced: false }
++    await db.review_logs.put(record)
++  }
++
++  return imported
++}
+diff --git a/src/lib/db.ts b/src/lib/db.ts
+new file mode 100644
+index 0000000..2b95ce7
+--- /dev/null
++++ b/src/lib/db.ts
+@@ -0,0 +1,173 @@
++// Dexie(IndexedDB) 로컬 스키마 + 로컬↔클라우드 동기화 계층.
++//
++// 동기화 패턴 (local-first):
++//   1. 입력/수정 시 Dexie 에 즉시 저장 (_synced=false) → UI 즉시 반영
++//   2. 백그라운드로 Supabase 에 upsert → 성공 시 _synced=true
++//   3. 앱 시작 시 dirty 레코드 push 후 Supabase 에서 최신 데이터 pull
++//   4. 충돌은 updated_at 최신 우선(last-write-wins)으로 단순 처리
++
++import Dexie, { type Table } from 'dexie'
++import type { Problem, ReviewLog } from '../types'
++import { supabase, ensureSignedIn } from './supabase'
++
++// Dexie 에 저장되는 레코드는 도메인 타입 + 로컬 동기화 메타데이터.
++export interface LocalProblem extends Problem {
++  _synced?: boolean
++  _deleted?: boolean
++}
++export interface LocalReviewLog extends ReviewLog {
++  _synced?: boolean
++}
++
++class TrackerDB extends Dexie {
++  problems!: Table<LocalProblem, string>
++  review_logs!: Table<LocalReviewLog, string>
++
++  constructor() {
++    super('leetcode-tracker')
++    this.version(1).stores({
++      problems: 'id, status, difficulty, updated_at, due_date, _synced, _deleted',
++      review_logs: 'id, problem_id, reviewed_at, _synced',
++    })
++  }
++}
++
++export const db = new TrackerDB()
++
++const PROBLEM_COLUMNS = [
++  'id', 'user_id', 'number', 'title', 'url', 'difficulty', 'tags', 'status',
++  'code', 'language', 'notes', 'time_complexity', 'space_complexity',
++  'perceived_difficulty', 'first_solved_at', 'ease_factor', 'interval_days',
++  'repetitions', 'due_date', 'last_reviewed_at', 'created_at', 'updated_at',
++] as const
++
++// 로컬 메타데이터(_synced/_deleted)를 제거하고 순수 Problem 행으로 변환.
++function toRow(p: LocalProblem): Problem {
++  const row = {} as Record<string, unknown>
++  const src = p as unknown as Record<string, unknown>
++  for (const key of PROBLEM_COLUMNS) row[key] = src[key]
++  return row as unknown as Problem
++}
++
++function fromRow(row: Problem): LocalProblem {
++  return { ...row, _synced: true, _deleted: false }
++}
++
++// ---------------------------------------------------------------------------
++// 푸시: 아직 동기화되지 않은(dirty) 로컬 변경분을 Supabase 로 올린다.
++// ---------------------------------------------------------------------------
++async function pushDirty(userId: string): Promise<void> {
++  if (!supabase) return
++
++  // 삭제 대기 레코드 처리
++  const deleted = await db.problems.filter((p) => p._deleted === true).toArray()
++  for (const p of deleted) {
++    const { error } = await supabase.from('problems').delete().eq('id', p.id)
++    if (!error) await db.problems.delete(p.id)
++  }
++
++  // 업서트 대기 레코드 처리
++  const dirty = await db.problems
++    .filter((p) => p._synced !== true && p._deleted !== true)
++    .toArray()
++  if (dirty.length > 0) {
++    const rows = dirty.map((p) => ({ ...toRow(p), user_id: userId }))
++    const { error } = await supabase.from('problems').upsert(rows)
++    if (!error) {
++      await db.problems.bulkPut(dirty.map((p) => ({ ...p, _synced: true })))
++    } else {
++      console.error('[sync] problems 업서트 실패:', error.message)
++    }
++  }
++
++  // review_logs (3단계에서 사용, 구조만 준비)
++  const dirtyLogs = await db.review_logs
++    .filter((l) => l._synced !== true)
++    .toArray()
++  if (dirtyLogs.length > 0) {
++    const rows = dirtyLogs.map(({ _synced, ...l }) => ({ ...l, user_id: userId }))
++    const { error } = await supabase.from('review_logs').upsert(rows)
++    if (!error) {
++      await db.review_logs.bulkPut(dirtyLogs.map((l) => ({ ...l, _synced: true })))
++    }
++  }
++}
++
++// ---------------------------------------------------------------------------
++// 풀: Supabase 의 최신 데이터를 받아 로컬에 머지 (updated_at 최신 우선).
++// ---------------------------------------------------------------------------
++async function pullRemote(userId: string): Promise<void> {
++  if (!supabase) return
++
++  const { data, error } = await supabase
++    .from('problems')
++    .select('*')
++    .eq('user_id', userId)
++  if (error) {
++    console.error('[sync] problems 조회 실패:', error.message)
++    return
++  }
++
++  for (const remote of (data ?? []) as Problem[]) {
++    const local = await db.problems.get(remote.id)
++    // 로컬이 더 최신(미동기화 변경)이면 덮어쓰지 않는다.
++    if (local && local._synced !== true && local.updated_at >= remote.updated_at) {
++      continue
++    }
++    await db.problems.put(fromRow(remote))
++  }
++
++  const { data: logs } = await supabase
++    .from('review_logs')
++    .select('*')
++    .eq('user_id', userId)
++  for (const log of (logs ?? []) as ReviewLog[]) {
++    await db.review_logs.put({ ...log, _synced: true })
++  }
++}
++
++let syncing = false
++
++/** 전체 동기화 사이클: 로그인 보장 → dirty push → remote pull. */
++export async function syncAll(): Promise<void> {
++  if (!supabase || syncing) return
++  syncing = true
++  try {
++    const userId = await ensureSignedIn()
++    if (!userId) return
++    await pushDirty(userId)
++    await pullRemote(userId)
++  } catch (e) {
++    console.error('[sync] 동기화 중 오류:', e)
++  } finally {
++    syncing = false
++  }
++}
++
++/** 단일 문제를 백그라운드로 Supabase 에 upsert (UI 블로킹 없음). */
++export async function pushProblem(p: LocalProblem): Promise<void> {
++  if (!supabase) return
++  try {
++    const userId = await ensureSignedIn()
++    if (!userId) return
++    const { error } = await supabase
++      .from('problems')
++      .upsert({ ...toRow(p), user_id: userId })
++    if (!error) await db.problems.update(p.id, { _synced: true })
++  } catch (e) {
++    console.error('[sync] pushProblem 실패:', e)
++  }
++}
++
++/** 단일 문제 삭제를 백그라운드로 Supabase 에 반영. */
++export async function deleteRemoteProblem(id: string): Promise<void> {
++  if (!supabase) return
++  try {
++    const userId = await ensureSignedIn()
++    if (!userId) return
++    const { error } = await supabase.from('problems').delete().eq('id', id)
++    if (!error) await db.problems.delete(id)
++  } catch (e) {
++    console.error('[sync] deleteRemoteProblem 실패:', e)
++  }
++}
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+new file mode 100644
+index 0000000..ae74624
+--- /dev/null
++++ b/src/lib/supabase.ts
+@@ -0,0 +1,60 @@
++// Supabase 클라이언트 초기화 + 단일 계정 자동 로그인.
++//
++// 로그인 UI 없이 개인용으로 쓰기 위해, .env 에 넣은 단일 계정 자격증명으로
++// 앱 시작 시 자동 로그인한다. RLS(auth.uid() = user_id) 는 그대로 유지되어
++// 본인 데이터만 접근/동기화된다.
++//
++// .env 값이 비어 있으면 Supabase 없이 로컬(Dexie)만으로 동작한다.
++
++import { createClient, type SupabaseClient } from '@supabase/supabase-js'
++
++const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
++const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
++const appEmail = import.meta.env.VITE_APP_USER_EMAIL as string | undefined
++const appPassword = import.meta.env.VITE_APP_USER_PASSWORD as string | undefined
++
++/** Supabase 연동이 설정되어 있는지 여부. */
++export const isSupabaseConfigured = Boolean(url && anonKey)
++
++export const supabase: SupabaseClient | null = isSupabaseConfigured
++  ? createClient(url!, anonKey!, {
++      auth: { persistSession: true, autoRefreshToken: true },
++    })
++  : null
++
++let signInPromise: Promise<string | null> | null = null
++
++/**
++ * 자동 로그인을 보장하고 현재 user_id 를 반환한다.
++ * - Supabase 미설정 또는 자격증명 없음 → null (로컬 전용 모드)
++ * - 이미 세션 존재 → 해당 user id
++ * - 세션 없음 → 단일 계정으로 signInWithPassword 후 user id
++ */
++export async function ensureSignedIn(): Promise<string | null> {
++  if (!supabase) return null
++  if (signInPromise) return signInPromise
++
++  signInPromise = (async () => {
++    const { data: sessionData } = await supabase.auth.getSession()
++    if (sessionData.session?.user) return sessionData.session.user.id
++
++    if (!appEmail || !appPassword) {
++      console.warn(
++        '[supabase] VITE_APP_USER_EMAIL/PASSWORD 가 비어 있어 클라우드 동기화를 건너뜁니다 (로컬 전용 모드).',
++      )
++      return null
++    }
++
++    const { data, error } = await supabase.auth.signInWithPassword({
++      email: appEmail,
++      password: appPassword,
++    })
++    if (error) {
++      console.error('[supabase] 자동 로그인 실패:', error.message)
++      return null
++    }
++    return data.user?.id ?? null
++  })()
++
++  return signInPromise
++}
+diff --git a/src/main.tsx b/src/main.tsx
+new file mode 100644
+index 0000000..fa94fac
+--- /dev/null
++++ b/src/main.tsx
+@@ -0,0 +1,13 @@
++import React from 'react'
++import ReactDOM from 'react-dom/client'
++import { BrowserRouter } from 'react-router-dom'
++import App from './App'
++import './index.css'
++
++ReactDOM.createRoot(document.getElementById('root')!).render(
++  <React.StrictMode>
++    <BrowserRouter>
++      <App />
++    </BrowserRouter>
++  </React.StrictMode>,
++)
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+new file mode 100644
+index 0000000..a60394b
+--- /dev/null
++++ b/src/pages/Dashboard.tsx
+@@ -0,0 +1,197 @@
++// 기본 대시보드: 총 푼 문제, 난이도별·태그별 진행도, 연속 학습일(streak),
++// JSON 내보내기/불러오기.
++import { useMemo, useRef } from 'react'
++import { useProblems } from '../hooks/useProblems'
++import { exportBackup, importBackup } from '../lib/backup'
++import { syncAll } from '../lib/db'
++import { DIFFICULTIES, DIFFICULTY_LABELS, type Difficulty } from '../types'
++
++const DIFF_BAR: Record<Difficulty, string> = {
++  easy: 'bg-emerald-500',
++  medium: 'bg-amber-500',
++  hard: 'bg-rose-500',
++}
++
++// 로컬 기준 YYYY-MM-DD.
++function localDay(iso: string): string {
++  const d = new Date(iso)
++  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
++    d.getDate(),
++  ).padStart(2, '0')}`
++}
++
++function computeStreak(days: Set<string>): number {
++  if (days.size === 0) return 0
++  let streak = 0
++  const cursor = new Date()
++  // 오늘 활동이 없으면 어제부터 시작 (오늘은 아직일 수 있으므로).
++  if (!days.has(localDay(cursor.toISOString()))) {
++    cursor.setDate(cursor.getDate() - 1)
++  }
++  while (days.has(localDay(cursor.toISOString()))) {
++    streak++
++    cursor.setDate(cursor.getDate() - 1)
++  }
++  return streak
++}
++
++function StatCard({ label, value }: { label: string; value: string | number }) {
++  return (
++    <div className="bg-white rounded-lg border border-slate-200 p-4">
++      <div className="text-xs font-medium text-slate-500">{label}</div>
++      <div className="text-2xl font-bold mt-1">{value}</div>
++    </div>
++  )
++}
++
++export default function Dashboard() {
++  const problems = useProblems()
++  const fileRef = useRef<HTMLInputElement>(null)
++
++  const stats = useMemo(() => {
++    const list = problems ?? []
++    const solvedStatuses = new Set(['solved', 'review'])
++    const solved = list.filter((p) => solvedStatuses.has(p.status))
++
++    const byDifficulty = DIFFICULTIES.map((d) => ({
++      difficulty: d,
++      total: list.filter((p) => p.difficulty === d).length,
++      solved: solved.filter((p) => p.difficulty === d).length,
++    }))
++
++    const tagCount = new Map<string, number>()
++    solved.forEach((p) =>
++      p.tags.forEach((t) => tagCount.set(t, (tagCount.get(t) ?? 0) + 1)),
++    )
++    const topTags = Array.from(tagCount.entries())
++      .sort((a, b) => b[1] - a[1])
++      .slice(0, 8)
++    const maxTag = topTags[0]?.[1] ?? 1
++
++    const activityDays = new Set<string>()
++    list.forEach((p) => {
++      if (p.first_solved_at) activityDays.add(localDay(p.first_solved_at))
++      if (p.last_reviewed_at) activityDays.add(localDay(p.last_reviewed_at))
++    })
++
++    return {
++      total: list.length,
++      solvedCount: solved.length,
++      byDifficulty,
++      topTags,
++      maxTag,
++      streak: computeStreak(activityDays),
++    }
++  }, [problems])
++
++  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
++    const file = e.target.files?.[0]
++    if (!file) return
++    try {
++      const n = await importBackup(file)
++      await syncAll()
++      alert(`${n}개의 문제를 불러왔습니다.`)
++    } catch (err) {
++      alert(`불러오기 실패: ${(err as Error).message}`)
++    } finally {
++      if (fileRef.current) fileRef.current.value = ''
++    }
++  }
++
++  return (
++    <div className="space-y-6">
++      <div className="flex items-center justify-between">
++        <h1 className="text-2xl font-bold">대시보드</h1>
++        <div className="flex gap-2">
++          <button
++            onClick={() => exportBackup()}
++            className="px-3 py-1.5 rounded-md text-sm font-medium border border-slate-300 hover:bg-slate-100"
++          >
++            JSON 내보내기
++          </button>
++          <button
++            onClick={() => fileRef.current?.click()}
++            className="px-3 py-1.5 rounded-md text-sm font-medium border border-slate-300 hover:bg-slate-100"
++          >
++            JSON 불러오기
++          </button>
++          <input
++            ref={fileRef}
++            type="file"
++            accept="application/json"
++            className="hidden"
++            onChange={handleImport}
++          />
++        </div>
++      </div>
++
++      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
++        <StatCard label="총 문제" value={stats.total} />
++        <StatCard label="푼 문제" value={stats.solvedCount} />
++        <StatCard label="연속 학습일" value={`${stats.streak}일`} />
++        <StatCard
++          label="완료율"
++          value={
++            stats.total
++              ? `${Math.round((stats.solvedCount / stats.total) * 100)}%`
++              : '0%'
++          }
++        />
++      </div>
++
++      {/* 난이도별 진행도 */}
++      <section className="bg-white rounded-lg border border-slate-200 p-5">
++        <h2 className="text-sm font-semibold text-slate-500 mb-4">
++          난이도별 진행도
++        </h2>
++        <div className="space-y-3">
++          {stats.byDifficulty.map((d) => (
++            <div key={d.difficulty}>
++              <div className="flex justify-between text-sm mb-1">
++                <span>{DIFFICULTY_LABELS[d.difficulty]}</span>
++                <span className="text-slate-400">
++                  {d.solved} / {d.total}
++                </span>
++              </div>
++              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
++                <div
++                  className={`h-full ${DIFF_BAR[d.difficulty]}`}
++                  style={{
++                    width: `${d.total ? (d.solved / d.total) * 100 : 0}%`,
++                  }}
++                />
++              </div>
++            </div>
++          ))}
++        </div>
++      </section>
++
++      {/* 태그별 진행도 */}
++      <section className="bg-white rounded-lg border border-slate-200 p-5">
++        <h2 className="text-sm font-semibold text-slate-500 mb-4">
++          많이 푼 태그 (Top 8)
++        </h2>
++        {stats.topTags.length === 0 ? (
++          <p className="text-slate-400 text-sm">아직 데이터가 없습니다.</p>
++        ) : (
++          <div className="space-y-2">
++            {stats.topTags.map(([tag, count]) => (
++              <div key={tag} className="flex items-center gap-3">
++                <span className="text-sm w-32 truncate">{tag}</span>
++                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
++                  <div
++                    className="h-full bg-slate-700"
++                    style={{ width: `${(count / stats.maxTag) * 100}%` }}
++                  />
++                </div>
++                <span className="text-xs text-slate-400 w-6 text-right">
++                  {count}
++                </span>
++              </div>
++            ))}
++          </div>
++        )}
++      </section>
++    </div>
++  )
++}
+diff --git a/src/pages/ProblemDetail.tsx b/src/pages/ProblemDetail.tsx
+new file mode 100644
+index 0000000..66fe0f4
+--- /dev/null
++++ b/src/pages/ProblemDetail.tsx
+@@ -0,0 +1,167 @@
++// 문제 상세: 풀이 코드·메모·복잡도·체감 난이도 보기 / 수정 / 삭제.
++import { useState } from 'react'
++import { Link, useNavigate, useParams } from 'react-router-dom'
++import {
++  deleteProblem,
++  updateProblem,
++  useProblem,
++} from '../hooks/useProblems'
++import { DifficultyBadge, StatusBadge } from '../components/Badges'
++import ProblemForm from '../components/ProblemForm'
++
++function Stars({ value }: { value: number | null }) {
++  if (!value) return <span className="text-slate-400">—</span>
++  return <span>{'★'.repeat(value)}{'☆'.repeat(5 - value)}</span>
++}
++
++export default function ProblemDetail() {
++  const { id } = useParams()
++  const navigate = useNavigate()
++  const problem = useProblem(id)
++  const [editing, setEditing] = useState(false)
++
++  if (problem === undefined) {
++    return <p className="text-slate-400 text-sm">불러오는 중…</p>
++  }
++  if (problem === null || !problem) {
++    return (
++      <div className="text-center py-16 text-slate-400">
++        문제를 찾을 수 없습니다.{' '}
++        <Link to="/problems" className="text-slate-700 underline">
++          목록으로
++        </Link>
++      </div>
++    )
++  }
++
++  async function handleDelete() {
++    if (!problem) return
++    if (!confirm(`"${problem.title}" 문제를 삭제할까요?`)) return
++    await deleteProblem(problem.id)
++    navigate('/problems')
++  }
++
++  if (editing) {
++    return (
++      <div className="bg-white rounded-lg border border-slate-200 p-6">
++        <h1 className="text-lg font-bold mb-4">문제 수정</h1>
++        <ProblemForm
++          initial={problem}
++          onCancel={() => setEditing(false)}
++          onSubmit={async (input) => {
++            await updateProblem(problem.id, input)
++            setEditing(false)
++          }}
++        />
++      </div>
++    )
++  }
++
++  const meta = 'text-xs font-medium text-slate-500'
++
++  return (
++    <div className="space-y-6">
++      <div className="flex items-start justify-between gap-4">
++        <div>
++          <Link
++            to="/problems"
++            className="text-sm text-slate-400 hover:text-slate-600"
++          >
++            ← 목록
++          </Link>
++          <h1 className="text-2xl font-bold mt-1">
++            {problem.number != null && (
++              <span className="text-slate-400">{problem.number}. </span>
++            )}
++            {problem.title}
++          </h1>
++          <div className="flex items-center gap-2 mt-2">
++            <DifficultyBadge value={problem.difficulty} />
++            <StatusBadge value={problem.status} />
++            {problem.url && (
++              <a
++                href={problem.url}
++                target="_blank"
++                rel="noreferrer"
++                className="text-xs text-blue-600 hover:underline"
++              >
++                LeetCode ↗
++              </a>
++            )}
++          </div>
++        </div>
++        <div className="flex gap-2 shrink-0">
++          <button
++            onClick={() => setEditing(true)}
++            className="px-3 py-1.5 rounded-md text-sm font-medium border border-slate-300 hover:bg-slate-100"
++          >
++            수정
++          </button>
++          <button
++            onClick={handleDelete}
++            className="px-3 py-1.5 rounded-md text-sm font-medium border border-rose-200 text-rose-600 hover:bg-rose-50"
++          >
++            삭제
++          </button>
++        </div>
++      </div>
++
++      {/* 메타 그리드 */}
++      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-white rounded-lg border border-slate-200 p-4">
++        <div>
++          <div className={meta}>언어</div>
++          <div>{problem.language}</div>
++        </div>
++        <div>
++          <div className={meta}>체감 난이도</div>
++          <div className="text-amber-500">
++            <Stars value={problem.perceived_difficulty} />
++          </div>
++        </div>
++        <div>
++          <div className={meta}>시간 복잡도</div>
++          <div className="font-mono">{problem.time_complexity || '—'}</div>
++        </div>
++        <div>
++          <div className={meta}>공간 복잡도</div>
++          <div className="font-mono">{problem.space_complexity || '—'}</div>
++        </div>
++      </div>
++
++      {problem.tags.length > 0 && (
++        <div className="flex gap-1 flex-wrap">
++          {problem.tags.map((t) => (
++            <span
++              key={t}
++              className="text-xs bg-slate-100 text-slate-600 rounded px-2 py-0.5"
++            >
++              {t}
++            </span>
++          ))}
++        </div>
++      )}
++
++      <section>
++        <h2 className="text-sm font-semibold text-slate-500 mb-2">풀이 코드</h2>
++        {problem.code ? (
++          <pre className="bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto text-sm">
++            <code>{problem.code}</code>
++          </pre>
++        ) : (
++          <p className="text-slate-400 text-sm">아직 코드가 없습니다.</p>
++        )}
++      </section>
++
++      <section>
++        <h2 className="text-sm font-semibold text-slate-500 mb-2">메모</h2>
++        {problem.notes ? (
++          <p className="whitespace-pre-wrap bg-white rounded-lg border border-slate-200 p-4 text-sm">
++            {problem.notes}
++          </p>
++        ) : (
++          <p className="text-slate-400 text-sm">메모가 없습니다.</p>
++        )}
++      </section>
++    </div>
++  )
++}
+diff --git a/src/pages/Problems.tsx b/src/pages/Problems.tsx
+new file mode 100644
+index 0000000..0cdb71a
+--- /dev/null
++++ b/src/pages/Problems.tsx
+@@ -0,0 +1,199 @@
++// 문제 목록: 난이도·태그·상태 필터, 검색, 정렬, 생성 모달.
++import { useMemo, useState } from 'react'
++import { Link } from 'react-router-dom'
++import { createProblem, useProblems } from '../hooks/useProblems'
++import { DifficultyBadge, StatusBadge } from '../components/Badges'
++import ProblemForm from '../components/ProblemForm'
++import {
++  DIFFICULTIES,
++  DIFFICULTY_LABELS,
++  STATUSES,
++  STATUS_LABELS,
++  type Difficulty,
++  type Status,
++} from '../types'
++
++type SortKey = 'updated' | 'number' | 'title' | 'difficulty'
++const DIFFICULTY_ORDER: Record<Difficulty, number> = { easy: 0, medium: 1, hard: 2 }
++
++export default function Problems() {
++  const problems = useProblems()
++  const [showForm, setShowForm] = useState(false)
++
++  const [search, setSearch] = useState('')
++  const [difficulty, setDifficulty] = useState<Difficulty | 'all'>('all')
++  const [status, setStatus] = useState<Status | 'all'>('all')
++  const [tag, setTag] = useState<string>('all')
++  const [sort, setSort] = useState<SortKey>('updated')
++
++  const allTags = useMemo(() => {
++    const set = new Set<string>()
++    problems?.forEach((p) => p.tags.forEach((t) => set.add(t)))
++    return Array.from(set).sort()
++  }, [problems])
++
++  const filtered = useMemo(() => {
++    if (!problems) return []
++    const q = search.trim().toLowerCase()
++    const list = problems.filter((p) => {
++      if (difficulty !== 'all' && p.difficulty !== difficulty) return false
++      if (status !== 'all' && p.status !== status) return false
++      if (tag !== 'all' && !p.tags.includes(tag)) return false
++      if (q) {
++        const hay = `${p.number ?? ''} ${p.title} ${p.tags.join(' ')}`.toLowerCase()
++        if (!hay.includes(q)) return false
++      }
++      return true
++    })
++    list.sort((a, b) => {
++      switch (sort) {
++        case 'number':
++          return (a.number ?? Infinity) - (b.number ?? Infinity)
++        case 'title':
++          return a.title.localeCompare(b.title)
++        case 'difficulty':
++          return (
++            (a.difficulty ? DIFFICULTY_ORDER[a.difficulty] : 99) -
++            (b.difficulty ? DIFFICULTY_ORDER[b.difficulty] : 99)
++          )
++        default:
++          return b.updated_at.localeCompare(a.updated_at)
++      }
++    })
++    return list
++  }, [problems, search, difficulty, status, tag, sort])
++
++  const selectCls =
++    'rounded-md border border-slate-300 px-2 py-1.5 text-sm bg-white'
++
++  return (
++    <div>
++      <div className="flex items-center justify-between mb-4">
++        <h1 className="text-2xl font-bold">
++          문제{' '}
++          <span className="text-slate-400 text-base font-normal">
++            {problems ? problems.length : ''}
++          </span>
++        </h1>
++        <button
++          onClick={() => setShowForm(true)}
++          className="px-4 py-2 rounded-md text-sm font-medium bg-slate-900 text-white hover:bg-slate-700"
++        >
++          + 새 문제
++        </button>
++      </div>
++
++      {/* 필터 바 */}
++      <div className="flex flex-wrap gap-2 mb-4">
++        <input
++          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm flex-1 min-w-[180px]"
++          placeholder="검색 (번호·제목·태그)"
++          value={search}
++          onChange={(e) => setSearch(e.target.value)}
++        />
++        <select
++          className={selectCls}
++          value={difficulty}
++          onChange={(e) => setDifficulty(e.target.value as Difficulty | 'all')}
++        >
++          <option value="all">난이도 전체</option>
++          {DIFFICULTIES.map((d) => (
++            <option key={d} value={d}>
++              {DIFFICULTY_LABELS[d]}
++            </option>
++          ))}
++        </select>
++        <select
++          className={selectCls}
++          value={status}
++          onChange={(e) => setStatus(e.target.value as Status | 'all')}
++        >
++          <option value="all">상태 전체</option>
++          {STATUSES.map((s) => (
++            <option key={s} value={s}>
++              {STATUS_LABELS[s]}
++            </option>
++          ))}
++        </select>
++        <select
++          className={selectCls}
++          value={tag}
++          onChange={(e) => setTag(e.target.value)}
++        >
++          <option value="all">태그 전체</option>
++          {allTags.map((t) => (
++            <option key={t} value={t}>
++              {t}
++            </option>
++          ))}
++        </select>
++        <select
++          className={selectCls}
++          value={sort}
++          onChange={(e) => setSort(e.target.value as SortKey)}
++        >
++          <option value="updated">최근 수정순</option>
++          <option value="number">번호순</option>
++          <option value="title">제목순</option>
++          <option value="difficulty">난이도순</option>
++        </select>
++      </div>
++
++      {/* 목록 */}
++      {problems === undefined ? (
++        <p className="text-slate-400 text-sm">불러오는 중…</p>
++      ) : filtered.length === 0 ? (
++        <div className="text-center py-16 text-slate-400">
++          {problems.length === 0
++            ? '아직 문제가 없습니다. "+ 새 문제"로 추가해 보세요.'
++            : '조건에 맞는 문제가 없습니다.'}
++        </div>
++      ) : (
++        <ul className="divide-y divide-slate-200 bg-white rounded-lg border border-slate-200">
++          {filtered.map((p) => (
++            <li key={p.id}>
++              <Link
++                to={`/problems/${p.id}`}
++                className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50"
++              >
++                <span className="text-slate-400 text-sm w-10 shrink-0">
++                  {p.number ?? '—'}
++                </span>
++                <span className="font-medium flex-1 truncate">{p.title}</span>
++                <span className="hidden sm:flex gap-1 flex-wrap justify-end max-w-[200px]">
++                  {p.tags.slice(0, 3).map((t) => (
++                    <span
++                      key={t}
++                      className="text-xs bg-slate-100 text-slate-500 rounded px-1.5 py-0.5"
++                    >
++                      {t}
++                    </span>
++                  ))}
++                </span>
++                <DifficultyBadge value={p.difficulty} />
++                <StatusBadge value={p.status} />
++              </Link>
++            </li>
++          ))}
++        </ul>
++      )}
++
++      {/* 생성 모달 */}
++      {showForm && (
++        <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 z-20 overflow-y-auto">
++          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl my-8 p-6">
++            <h2 className="text-lg font-bold mb-4">새 문제 추가</h2>
++            <ProblemForm
++              submitLabel="추가"
++              onCancel={() => setShowForm(false)}
++              onSubmit={async (input) => {
++                await createProblem(input)
++                setShowForm(false)
++              }}
++            />
++          </div>
++        </div>
++      )}
++    </div>
++  )
++}
+diff --git a/src/types.ts b/src/types.ts
+new file mode 100644
+index 0000000..50fde7b
+--- /dev/null
++++ b/src/types.ts
+@@ -0,0 +1,71 @@
++// 도메인 타입 정의 — Supabase 스키마(supabase/schema.sql)와 1:1 대응.
++
++export type Difficulty = 'easy' | 'medium' | 'hard'
++export type Status = 'todo' | 'solving' | 'solved' | 'review'
++
++export interface Problem {
++  id: string
++  user_id?: string | null
++  number: number | null
++  title: string
++  url: string | null
++  difficulty: Difficulty | null
++  tags: string[]
++  status: Status
++  code: string | null
++  language: string
++  notes: string | null
++  time_complexity: string | null
++  space_complexity: string | null
++  perceived_difficulty: number | null
++  first_solved_at: string | null
++  // SM-2 간격 반복 상태 (3단계)
++  ease_factor: number
++  interval_days: number
++  repetitions: number
++  due_date: string | null
++  last_reviewed_at: string | null
++  created_at: string
++  updated_at: string
++}
++
++export interface ReviewLog {
++  id: string
++  user_id?: string | null
++  problem_id: string
++  reviewed_at: string
++  quality: number
++}
++
++// 신규 문제 생성 시 폼에서 받는 필드들.
++export type ProblemInput = Pick<
++  Problem,
++  | 'number'
++  | 'title'
++  | 'url'
++  | 'difficulty'
++  | 'tags'
++  | 'status'
++  | 'code'
++  | 'language'
++  | 'notes'
++  | 'time_complexity'
++  | 'space_complexity'
++  | 'perceived_difficulty'
++>
++
++export const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard']
++export const STATUSES: Status[] = ['todo', 'solving', 'solved', 'review']
++
++export const STATUS_LABELS: Record<Status, string> = {
++  todo: '할 일',
++  solving: '푸는 중',
++  solved: '해결',
++  review: '복습',
++}
++
++export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
++  easy: 'Easy',
++  medium: 'Medium',
++  hard: 'Hard',
++}
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+new file mode 100644
+index 0000000..e80dd64
+--- /dev/null
++++ b/src/vite-env.d.ts
+@@ -0,0 +1,12 @@
++/// <reference types="vite/client" />
++
++interface ImportMetaEnv {
++  readonly VITE_SUPABASE_URL?: string
++  readonly VITE_SUPABASE_ANON_KEY?: string
++  readonly VITE_APP_USER_EMAIL?: string
++  readonly VITE_APP_USER_PASSWORD?: string
++}
++
++interface ImportMeta {
++  readonly env: ImportMetaEnv
++}
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+new file mode 100644
+index 0000000..e062bbd
+--- /dev/null
++++ b/supabase/schema.sql
+@@ -0,0 +1,53 @@
++-- LeetCode 공부 트래커 — Supabase / Postgres 스키마
++-- 적용 방법:
++--   1) Supabase 대시보드 > SQL Editor 에 아래 전체를 붙여넣고 실행.
++--   2) Authentication > Users 에서 본인 계정을 1개 생성한 뒤,
++--      그 이메일/비밀번호를 프로젝트 루트 .env 의
++--      VITE_APP_USER_EMAIL / VITE_APP_USER_PASSWORD 에 입력.
++--   3) 앱이 시작 시 해당 계정으로 자동 로그인하며, RLS 로 본인 데이터만 접근합니다.
++
++create table if not exists problems (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references auth.users(id) default auth.uid(),
++  number int,
++  title text not null,
++  url text,
++  difficulty text check (difficulty in ('easy','medium','hard')),
++  tags text[] default '{}',
++  status text not null default 'todo'
++    check (status in ('todo','solving','solved','review')),
++  code text,
++  language text default 'python',
++  notes text,
++  time_complexity text,
++  space_complexity text,
++  perceived_difficulty int check (perceived_difficulty between 1 and 5),
++  first_solved_at timestamptz,
++  -- SM-2 간격 반복 상태 (3단계)
++  ease_factor real default 2.5,
++  interval_days int default 0,
++  repetitions int default 0,
++  due_date date,
++  last_reviewed_at timestamptz,
++  created_at timestamptz default now(),
++  updated_at timestamptz default now()
++);
++
++create table if not exists review_logs (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references auth.users(id) default auth.uid(),
++  problem_id uuid not null references problems(id) on delete cascade,
++  reviewed_at timestamptz default now(),
++  quality int check (quality between 0 and 5)
++);
++
++alter table problems enable row level security;
++alter table review_logs enable row level security;
++
++drop policy if exists "own problems" on problems;
++create policy "own problems" on problems
++  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
++
++drop policy if exists "own reviews" on review_logs;
++create policy "own reviews" on review_logs
++  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+diff --git a/tailwind.config.js b/tailwind.config.js
+new file mode 100644
+index 0000000..17e52a2
+--- /dev/null
++++ b/tailwind.config.js
+@@ -0,0 +1,16 @@
++/** @type {import('tailwindcss').Config} */
++export default {
++  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
++  theme: {
++    extend: {
++      colors: {
++        difficulty: {
++          easy: '#00b8a3',
++          medium: '#ffb800',
++          hard: '#ff375f',
++        },
++      },
++    },
++  },
++  plugins: [],
++}
+diff --git a/tsconfig.app.json b/tsconfig.app.json
+new file mode 100644
+index 0000000..5405343
+--- /dev/null
++++ b/tsconfig.app.json
+@@ -0,0 +1,22 @@
++{
++  "compilerOptions": {
++    "target": "ES2020",
++    "useDefineForClassFields": true,
++    "lib": ["ES2020", "DOM", "DOM.Iterable"],
++    "module": "ESNext",
++    "skipLibCheck": true,
++
++    "moduleResolution": "bundler",
++    "allowImportingTsExtensions": true,
++    "isolatedModules": true,
++    "moduleDetection": "force",
++    "noEmit": true,
++    "jsx": "react-jsx",
++
++    "strict": true,
++    "noUnusedLocals": true,
++    "noUnusedParameters": true,
++    "noFallthroughCasesInSwitch": true
++  },
++  "include": ["src"]
++}
+diff --git a/tsconfig.json b/tsconfig.json
+new file mode 100644
+index 0000000..1ffef60
+--- /dev/null
++++ b/tsconfig.json
+@@ -0,0 +1,7 @@
++{
++  "files": [],
++  "references": [
++    { "path": "./tsconfig.app.json" },
++    { "path": "./tsconfig.node.json" }
++  ]
++}
+diff --git a/tsconfig.node.json b/tsconfig.node.json
+new file mode 100644
+index 0000000..2e22638
+--- /dev/null
++++ b/tsconfig.node.json
+@@ -0,0 +1,19 @@
++{
++  "compilerOptions": {
++    "target": "ES2022",
++    "lib": ["ES2023"],
++    "module": "ESNext",
++    "skipLibCheck": true,
++
++    "moduleResolution": "bundler",
++    "allowImportingTsExtensions": true,
++    "isolatedModules": true,
++    "moduleDetection": "force",
++    "noEmit": true,
++
++    "strict": true,
++    "noUnusedLocals": true,
++    "noUnusedParameters": true
++  },
++  "include": ["vite.config.ts"]
++}
+diff --git a/vite.config.ts b/vite.config.ts
+new file mode 100644
+index 0000000..5a33944
+--- /dev/null
++++ b/vite.config.ts
+@@ -0,0 +1,7 @@
++import { defineConfig } from 'vite'
++import react from '@vitejs/plugin-react'
++
++// https://vitejs.dev/config/
++export default defineConfig({
++  plugins: [react()],
++})
+-- 
+2.43.0
+
