@@ -16,8 +16,8 @@ interface Props {
   submitLabel?: string
 }
 
-const field = 'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400'
-const label = 'block text-xs font-medium text-slate-500 mb-1'
+const field = 'input'
+const label = 'field-label'
 
 export default function ProblemForm({
   initial,
@@ -207,21 +207,13 @@ export default function ProblemForm({
         />
       </div>
 
-      <div className="flex gap-2 justify-end">
+      <div className="flex gap-2 justify-end pt-1">
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 rounded-md text-sm font-medium border border-slate-300 hover:bg-slate-100"
-          >
+          <button type="button" onClick={onCancel} className="btn-ghost">
             취소
           </button>
         )}
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-4 py-2 rounded-md text-sm font-medium bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+        <button type="submit" disabled={saving} className="btn-primary">
           {saving ? '저장 중…' : submitLabel}
         </button>
       </div>

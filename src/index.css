@@ -7,5 +7,80 @@
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply text-slate-800 antialiased;
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(168, 85, 247, 0.20), transparent 60%),
+    radial-gradient(1000px 500px at -10% 5%, rgba(99, 102, 241, 0.18), transparent 55%),
+    radial-gradient(900px 600px at 50% 120%, rgba(236, 72, 153, 0.14), transparent 60%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+@layer components {
+  /* 프로스티드 글래스 카드 */
+  .card {
+    @apply rounded-2xl bg-white/60 backdrop-blur-xl border border-white/70
+           shadow-xl shadow-indigo-300/20;
+  }
+  .card-hover {
+    @apply transition duration-200 hover:bg-white/80 hover:shadow-2xl
+           hover:shadow-indigo-300/30 hover:-translate-y-0.5;
+  }
+
+  /* 입력 요소 */
+  .input {
+    @apply w-full rounded-xl border border-slate-200/80 bg-white/70 px-3.5 py-2.5 text-sm
+           shadow-sm transition
+           placeholder:text-slate-400
+           focus:outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100;
+  }
+  select.input {
+    @apply pr-8 cursor-pointer;
+  }
+
+  .field-label {
+    @apply block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1.5;
+  }
+
+  /* 버튼 */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm
+           font-semibold transition active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn text-white
+           bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500
+           shadow-lg shadow-violet-400/30
+           hover:shadow-xl hover:shadow-violet-400/40 hover:brightness-[1.07];
+  }
+  .btn-ghost {
+    @apply btn border border-slate-200/70 bg-white/60 text-slate-600 backdrop-blur
+           hover:bg-white hover:border-slate-300 hover:text-slate-800;
+  }
+  .btn-danger {
+    @apply btn border border-rose-200 bg-rose-50/70 text-rose-600 hover:bg-rose-100;
+  }
+
+  /* 그라디언트 텍스트 */
+  .gradient-text {
+    @apply bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600
+           bg-clip-text text-transparent;
+  }
+
+  /* 칩/태그 */
+  .chip {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium
+           bg-slate-100/80 text-slate-600 border border-slate-200/70;
+  }
+
+  /* 스켈레톤 */
+  .skeleton {
+    @apply relative overflow-hidden rounded-xl bg-slate-200/60;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer
+           bg-gradient-to-r from-transparent via-white/60 to-transparent;
+  }
 }
