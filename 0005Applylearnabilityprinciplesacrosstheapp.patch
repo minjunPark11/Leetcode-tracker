@@ -1,0 +1,1087 @@
+From 60212a3766be5b04ab8a7757620dba32909dd0b4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 11:24:14 +0000
+Subject: [PATCH 5/5] Apply learnability principles across the app
+
+- Adopt lucide-react for all icons (remove custom inline icon set)
+- Define design tokens in tailwind.config (brand color scale, radius
+  control/card/panel, card shadows) and route components through token
+  classes (.card/.panel/.btn/.input/.chip) in index.css
+- Explicit hover/active/focus-visible states on every interactive element
+  (buttons, links, sidebar rows, icon buttons, rail icons)
+- Specific form validation messages (what's wrong + how to fix) shown
+  inline per field with error styling, focus first error + summary toast
+- Clear label + placeholder on every form field (htmlFor/id wired up)
+- Conventional SaaS layout retained (rail + sidebar + content + modal)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JJ2ALpPXcgcr9CfdzcsDU4
+---
+ package-lock.json                 |  10 ++
+ package.json                      |   1 +
+ src/App.tsx                       |  19 ++--
+ src/components/ProblemForm.tsx    | 172 +++++++++++++++++++++++-------
+ src/components/ProblemSidebar.tsx |  36 +++----
+ src/components/Toast.tsx          |   6 +-
+ src/components/icons.tsx          | 153 --------------------------
+ src/index.css                     |  61 +++++++----
+ src/pages/Dashboard.tsx           |  22 ++--
+ src/pages/ProblemDetail.tsx       |  25 ++---
+ src/pages/Problems.tsx            |  24 ++---
+ tailwind.config.js                |  38 ++++++-
+ 12 files changed, 274 insertions(+), 293 deletions(-)
+ delete mode 100644 src/components/icons.tsx
+
+diff --git a/package-lock.json b/package-lock.json
+index b19e5e7..d3693d9 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -11,6 +11,7 @@
+         "@supabase/supabase-js": "^2.45.4",
+         "dexie": "^4.0.8",
+         "dexie-react-hooks": "^1.1.7",
++        "lucide-react": "^1.22.0",
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1",
+         "react-router-dom": "^6.26.2",
+@@ -2239,6 +2240,15 @@
+         "yallist": "^3.0.2"
+       }
+     },
++    "node_modules/lucide-react": {
++      "version": "1.22.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.22.0.tgz",
++      "integrity": "sha512-c9o3l0PiNcgOQDW4F31BEYHudE7kgxVt3o30qMl36ZPwTxXlGB4QnLilhERvVM4uh/pl5MDyY1/gzZSYcHDtBg==",
++      "license": "ISC",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
+     "node_modules/merge2": {
+       "version": "1.4.1",
+       "resolved": "https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz",
+diff --git a/package.json b/package.json
+index 6812a24..db5eff0 100644
+--- a/package.json
++++ b/package.json
+@@ -13,6 +13,7 @@
+     "@supabase/supabase-js": "^2.45.4",
+     "dexie": "^4.0.8",
+     "dexie-react-hooks": "^1.1.7",
++    "lucide-react": "^1.22.0",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1",
+     "react-router-dom": "^6.26.2",
+diff --git a/src/App.tsx b/src/App.tsx
+index 830d2bf..d3a415b 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -4,17 +4,17 @@ import { syncAll } from './lib/db'
+ import { isSupabaseConfigured } from './lib/supabase'
+ import { Toaster } from './components/Toast'
+ import ProblemSidebar from './components/ProblemSidebar'
+-import { BookIcon, GridIcon, TargetIcon } from './components/icons'
++import { Code2, LayoutDashboard, ListChecks } from 'lucide-react'
+ import Dashboard from './pages/Dashboard'
+ import Problems from './pages/Problems'
+ import ProblemDetail from './pages/ProblemDetail'
+ 
+ const RAIL = [
+-  { to: '/', label: '대시보드', Icon: GridIcon, match: (p: string) => p === '/' },
++  { to: '/', label: '대시보드', Icon: LayoutDashboard, match: (p: string) => p === '/' },
+   {
+     to: '/problems',
+     label: '문제',
+-    Icon: TargetIcon,
++    Icon: ListChecks,
+     match: (p: string) => p.startsWith('/problems'),
+   },
+ ]
+@@ -35,10 +35,11 @@ function RailIcon({
+       to={to}
+       title={label}
+       aria-label={label}
+-      className={`grid place-items-center w-11 h-11 rounded-2xl transition ${
++      className={`grid place-items-center w-11 h-11 rounded-control transition active:scale-95
++        focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-400/40 ${
+         active
+           ? 'bg-white/15 text-white shadow-lg'
+-          : 'text-slate-500 hover:text-white hover:bg-white/10'
++          : 'text-slate-400 hover:text-white hover:bg-white/10'
+       }`}
+     >
+       {children}
+@@ -66,14 +67,14 @@ export default function App() {
+     <div className="min-h-screen flex">
+       {/* 다크 아이콘 레일 */}
+       <aside className="shrink-0 p-3 h-screen sticky top-0">
+-        <div className="bg-slate-900 rounded-[26px] h-full w-[68px] flex flex-col items-center py-4">
+-          <span className="grid place-items-center w-11 h-11 rounded-2xl text-white bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/30">
+-            <BookIcon width={22} height={22} />
++        <div className="bg-slate-900 rounded-panel h-full w-[68px] flex flex-col items-center py-4">
++          <span className="grid place-items-center w-11 h-11 rounded-control text-white bg-brand-gradient shadow-lg shadow-brand-500/30">
++            <Code2 size={22} />
+           </span>
+           <nav className="mt-6 flex flex-col gap-2">
+             {RAIL.map(({ to, label, Icon, match }) => (
+               <RailIcon key={to} to={to} label={label} active={match(location.pathname)}>
+-                <Icon width={20} height={20} />
++                <Icon size={20} />
+               </RailIcon>
+             ))}
+           </nav>
+diff --git a/src/components/ProblemForm.tsx b/src/components/ProblemForm.tsx
+index 09a829a..96bc265 100644
+--- a/src/components/ProblemForm.tsx
++++ b/src/components/ProblemForm.tsx
+@@ -1,4 +1,5 @@
+ // 문제 생성/수정 폼. 생성과 수정 양쪽에서 재사용.
++// 검증 실패 시 "무엇이 / 왜 / 어떻게 고칠지"를 알려주는 구체적 메시지를 필드별로 표시한다.
+ import { useState } from 'react'
+ import {
+   DIFFICULTIES,
+@@ -8,6 +9,7 @@ import {
+   type Problem,
+   type ProblemInput,
+ } from '../types'
++import { toast } from './Toast'
+ 
+ interface Props {
+   initial?: Problem
+@@ -16,8 +18,7 @@ interface Props {
+   submitLabel?: string
+ }
+ 
+-const field = 'input'
+-const label = 'field-label'
++type Errors = Partial<Record<'number' | 'title' | 'url' | 'perceived', string>>
+ 
+ export default function ProblemForm({
+   initial,
+@@ -39,11 +40,48 @@ export default function ProblemForm({
+   const [perceived, setPerceived] = useState(
+     initial?.perceived_difficulty?.toString() ?? '',
+   )
++  const [errors, setErrors] = useState<Errors>({})
+   const [saving, setSaving] = useState(false)
+ 
+-  async function handleSubmit(e: React.FormEvent) {
+-    e.preventDefault()
+-    if (!title.trim()) return
++  // 무엇이 잘못됐는지 + 어떻게 고치는지 구체적으로 안내.
++  function validate(): Errors {
++    const e: Errors = {}
++    if (!title.trim()) {
++      e.title = '제목을 입력해주세요. (예: Two Sum)'
++    }
++    if (number.trim()) {
++      const n = Number(number)
++      if (!Number.isInteger(n) || n <= 0) {
++        e.number = '문제 번호는 1 이상의 정수로 입력해주세요. (예: 1)'
++      }
++    }
++    if (url.trim() && !/^https?:\/\//i.test(url.trim())) {
++      e.url = 'URL은 http:// 또는 https:// 로 시작해야 합니다.'
++    }
++    if (perceived.trim()) {
++      const n = Number(perceived)
++      if (!Number.isInteger(n) || n < 1 || n > 5) {
++        e.perceived = '체감 난이도는 1부터 5 사이의 숫자로 입력해주세요.'
++      }
++    }
++    return e
++  }
++
++  const clearError = (key: keyof Errors) =>
++    setErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev))
++
++  async function handleSubmit(ev: React.FormEvent) {
++    ev.preventDefault()
++    const e = validate()
++    setErrors(e)
++    if (Object.keys(e).length > 0) {
++      // 첫 번째 오류 필드로 포커스 이동 + 요약 토스트.
++      const first = (Object.keys(e) as (keyof Errors)[])[0]
++      document.getElementById(`field-${first}`)?.focus()
++      toast.error('입력값을 확인해주세요. 표시된 항목을 수정하면 저장할 수 있어요.')
++      return
++    }
++
+     setSaving(true)
+     const input: ProblemInput = {
+       number: number.trim() ? parseInt(number, 10) : null,
+@@ -69,46 +107,75 @@ export default function ProblemForm({
+     }
+   }
+ 
++  const inputCls = (key?: keyof Errors) =>
++    `input ${key && errors[key] ? 'input-error' : ''}`
++
+   return (
+-    <form onSubmit={handleSubmit} className="space-y-4">
++    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+         <div>
+-          <label className={label}>번호</label>
++          <label htmlFor="field-number" className="field-label">
++            번호
++          </label>
+           <input
+-            className={field}
++            id="field-number"
++            className={inputCls('number')}
+             value={number}
+-            onChange={(e) => setNumber(e.target.value)}
++            onChange={(e) => {
++              setNumber(e.target.value)
++              clearError('number')
++            }}
+             placeholder="예: 1"
+             inputMode="numeric"
++            aria-invalid={!!errors.number}
+           />
++          {errors.number && <p className="field-error">{errors.number}</p>}
+         </div>
+         <div className="sm:col-span-3">
+-          <label className={label}>제목 *</label>
++          <label htmlFor="field-title" className="field-label">
++            제목 <span className="text-rose-500">*</span>
++          </label>
+           <input
+-            className={field}
++            id="field-title"
++            className={inputCls('title')}
+             value={title}
+-            onChange={(e) => setTitle(e.target.value)}
+-            placeholder="Two Sum"
+-            required
++            onChange={(e) => {
++              setTitle(e.target.value)
++              clearError('title')
++            }}
++            placeholder="문제 제목 (예: Two Sum)"
++            aria-invalid={!!errors.title}
+           />
++          {errors.title && <p className="field-error">{errors.title}</p>}
+         </div>
+       </div>
+ 
+       <div>
+-        <label className={label}>URL</label>
++        <label htmlFor="field-url" className="field-label">
++          URL
++        </label>
+         <input
+-          className={field}
++          id="field-url"
++          className={inputCls('url')}
+           value={url}
+-          onChange={(e) => setUrl(e.target.value)}
++          onChange={(e) => {
++            setUrl(e.target.value)
++            clearError('url')
++          }}
+           placeholder="https://leetcode.com/problems/two-sum/"
++          aria-invalid={!!errors.url}
+         />
++        {errors.url && <p className="field-error">{errors.url}</p>}
+       </div>
+ 
+       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+         <div>
+-          <label className={label}>난이도</label>
++          <label htmlFor="field-difficulty" className="field-label">
++            난이도
++          </label>
+           <select
+-            className={field}
++            id="field-difficulty"
++            className="input"
+             value={difficulty}
+             onChange={(e) => setDifficulty(e.target.value as typeof difficulty)}
+           >
+@@ -120,9 +187,12 @@ export default function ProblemForm({
+           </select>
+         </div>
+         <div>
+-          <label className={label}>상태</label>
++          <label htmlFor="field-status" className="field-label">
++            상태
++          </label>
+           <select
+-            className={field}
++            id="field-status"
++            className="input"
+             value={status}
+             onChange={(e) => setStatus(e.target.value as typeof status)}
+           >
+@@ -134,30 +204,44 @@ export default function ProblemForm({
+           </select>
+         </div>
+         <div>
+-          <label className={label}>언어</label>
++          <label htmlFor="field-language" className="field-label">
++            언어
++          </label>
+           <input
+-            className={field}
++            id="field-language"
++            className="input"
+             value={language}
+             onChange={(e) => setLanguage(e.target.value)}
+             placeholder="python"
+           />
+         </div>
+         <div>
+-          <label className={label}>체감 난이도 (1~5)</label>
++          <label htmlFor="field-perceived" className="field-label">
++            체감 난이도 (1~5)
++          </label>
+           <input
+-            className={field}
++            id="field-perceived"
++            className={inputCls('perceived')}
+             value={perceived}
+-            onChange={(e) => setPerceived(e.target.value)}
+-            placeholder="3"
++            onChange={(e) => {
++              setPerceived(e.target.value)
++              clearError('perceived')
++            }}
++            placeholder="예: 3"
+             inputMode="numeric"
++            aria-invalid={!!errors.perceived}
+           />
++          {errors.perceived && <p className="field-error">{errors.perceived}</p>}
+         </div>
+       </div>
+ 
+       <div>
+-        <label className={label}>태그 (쉼표로 구분)</label>
++        <label htmlFor="field-tags" className="field-label">
++          태그 (쉼표로 구분)
++        </label>
+         <input
+-          className={field}
++          id="field-tags"
++          className="input"
+           value={tags}
+           onChange={(e) => setTags(e.target.value)}
+           placeholder="array, hash-table"
+@@ -166,18 +250,24 @@ export default function ProblemForm({
+ 
+       <div className="grid grid-cols-2 gap-3">
+         <div>
+-          <label className={label}>시간 복잡도</label>
++          <label htmlFor="field-time" className="field-label">
++            시간 복잡도
++          </label>
+           <input
+-            className={field}
++            id="field-time"
++            className="input"
+             value={timeC}
+             onChange={(e) => setTimeC(e.target.value)}
+             placeholder="O(n)"
+           />
+         </div>
+         <div>
+-          <label className={label}>공간 복잡도</label>
++          <label htmlFor="field-space" className="field-label">
++            공간 복잡도
++          </label>
+           <input
+-            className={field}
++            id="field-space"
++            className="input"
+             value={spaceC}
+             onChange={(e) => setSpaceC(e.target.value)}
+             placeholder="O(n)"
+@@ -186,20 +276,26 @@ export default function ProblemForm({
+       </div>
+ 
+       <div>
+-        <label className={label}>풀이 코드</label>
++        <label htmlFor="field-code" className="field-label">
++          풀이 코드
++        </label>
+         <textarea
+-          className={`${field} font-mono`}
++          id="field-code"
++          className="input font-mono"
+           value={code}
+           onChange={(e) => setCode(e.target.value)}
+           rows={8}
+-          placeholder="class Solution:&#10;    def twoSum(self, nums, target):"
++          placeholder={'class Solution:\n    def twoSum(self, nums, target):'}
+         />
+       </div>
+ 
+       <div>
+-        <label className={label}>메모</label>
++        <label htmlFor="field-notes" className="field-label">
++          메모
++        </label>
+         <textarea
+-          className={field}
++          id="field-notes"
++          className="input"
+           value={notes}
+           onChange={(e) => setNotes(e.target.value)}
+           rows={4}
+diff --git a/src/components/ProblemSidebar.tsx b/src/components/ProblemSidebar.tsx
+index 042b3b0..11c10af 100644
+--- a/src/components/ProblemSidebar.tsx
++++ b/src/components/ProblemSidebar.tsx
+@@ -11,20 +11,13 @@ import {
+   type Difficulty,
+   type Status,
+ } from '../types'
+-import {
+-  ListIcon,
+-  CircleIcon,
+-  CircleDotIcon,
+-  CircleCheckIcon,
+-  RefreshIcon,
+-} from './icons'
+-import type { ComponentType, SVGProps } from 'react'
++import { List, Circle, CircleDot, CircleCheck, RefreshCw, type LucideIcon } from 'lucide-react'
+ 
+-const STATUS_ICON: Record<Status, ComponentType<SVGProps<SVGSVGElement>>> = {
+-  todo: CircleIcon,
+-  solving: CircleDotIcon,
+-  solved: CircleCheckIcon,
+-  review: RefreshIcon,
++const STATUS_ICON: Record<Status, LucideIcon> = {
++  todo: Circle,
++  solving: CircleDot,
++  solved: CircleCheck,
++  review: RefreshCw,
+ }
+ 
+ const DIFF_DOT: Record<Difficulty, string> = {
+@@ -49,21 +42,22 @@ function Row({
+   return (
+     <Link
+       to={to}
+-      className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
++      className={`group flex items-center gap-3 rounded-control px-3 py-2.5 text-sm font-semibold transition
++        active:scale-[0.98] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-200 ${
+         active
+-          ? 'bg-gradient-to-r from-violet-100 to-fuchsia-100 text-violet-700 shadow-sm shadow-violet-200/50'
+-          : 'text-slate-600 hover:bg-white/70'
++          ? 'bg-gradient-to-r from-brand-100 to-fuchsia-100 text-brand-700 shadow-sm shadow-brand-200/50'
++          : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
+       }`}
+     >
+       <span
+-        className={`shrink-0 ${active ? 'text-violet-500' : 'text-slate-400 group-hover:text-slate-500'}`}
++        className={`shrink-0 ${active ? 'text-brand-500' : 'text-slate-400 group-hover:text-slate-500'}`}
+       >
+         {icon}
+       </span>
+       <span className="flex-1 truncate">{label}</span>
+       <span
+         className={`text-xs font-bold tabular-nums ${
+-          active ? 'text-violet-400' : 'text-slate-300'
++          active ? 'text-brand-400' : 'text-slate-300'
+         }`}
+       >
+         {count}
+@@ -100,7 +94,7 @@ export default function ProblemSidebar() {
+   const diffCount = (d: Difficulty) => list.filter((p) => p.difficulty === d).length
+ 
+   return (
+-    <div className="card !rounded-3xl h-full flex flex-col p-3 overflow-y-auto">
++    <div className="panel h-full flex flex-col p-3 overflow-y-auto">
+       <h2 className="px-3 pt-2 pb-3 text-xl font-extrabold tracking-tight">문제</h2>
+ 
+       <Row
+@@ -108,7 +102,7 @@ export default function ProblemSidebar() {
+         active={!curStatus && !curDiff}
+         label="전체"
+         count={list.length}
+-        icon={<ListIcon width={18} height={18} />}
++        icon={<List size={18} />}
+       />
+ 
+       <div className="mx-3 my-1 border-t border-slate-200/70" />
+@@ -123,7 +117,7 @@ export default function ProblemSidebar() {
+             active={curStatus === s}
+             label={STATUS_LABELS[s]}
+             count={statusCount(s)}
+-            icon={<Icon width={18} height={18} />}
++            icon={<Icon size={18} />}
+           />
+         )
+       })}
+diff --git a/src/components/Toast.tsx b/src/components/Toast.tsx
+index cf96dbd..2551962 100644
+--- a/src/components/Toast.tsx
++++ b/src/components/Toast.tsx
+@@ -1,7 +1,7 @@
+ // 가벼운 토스트 알림. 모듈 스토어 + <Toaster/> 로 구성하며,
+ // 어디서든 toast.success(...) / toast.error(...) 로 호출한다.
+ import { useEffect, useState } from 'react'
+-import { CheckIcon, CloseIcon } from './icons'
++import { Check, X } from 'lucide-react'
+ 
+ type ToastKind = 'success' | 'error' | 'info'
+ interface ToastItem {
+@@ -66,9 +66,9 @@ export function Toaster() {
+             className={`shrink-0 grid place-items-center w-6 h-6 rounded-full text-white ${DOT[t.kind]}`}
+           >
+             {t.kind === 'success' ? (
+-              <CheckIcon width={14} height={14} strokeWidth={3} />
++              <Check size={14} strokeWidth={3} />
+             ) : (
+-              <CloseIcon width={14} height={14} strokeWidth={3} />
++              <X size={14} strokeWidth={3} />
+             )}
+           </span>
+           <span className="text-sm font-medium text-slate-700">{t.message}</span>
+diff --git a/src/components/icons.tsx b/src/components/icons.tsx
+deleted file mode 100644
+index 666295f..0000000
+--- a/src/components/icons.tsx
++++ /dev/null
+@@ -1,153 +0,0 @@
+-// 외부 의존성 없는 인라인 SVG 아이콘 세트 (stroke 기반, currentColor).
+-import type { SVGProps } from 'react'
+-
+-type IconProps = SVGProps<SVGSVGElement>
+-
+-const base = (props: IconProps) => ({
+-  width: 20,
+-  height: 20,
+-  viewBox: '0 0 24 24',
+-  fill: 'none',
+-  stroke: 'currentColor',
+-  strokeWidth: 1.8,
+-  strokeLinecap: 'round' as const,
+-  strokeLinejoin: 'round' as const,
+-  ...props,
+-})
+-
+-export const GridIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <rect x="3" y="3" width="7" height="9" rx="1.5" />
+-    <rect x="14" y="3" width="7" height="5" rx="1.5" />
+-    <rect x="14" y="12" width="7" height="9" rx="1.5" />
+-    <rect x="3" y="16" width="7" height="5" rx="1.5" />
+-  </svg>
+-)
+-
+-export const ListIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M8 6h13M8 12h13M8 18h13" />
+-    <circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none" />
+-    <circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+-    <circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none" />
+-  </svg>
+-)
+-
+-export const PlusIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M12 5v14M5 12h14" />
+-  </svg>
+-)
+-
+-export const SearchIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <circle cx="11" cy="11" r="7" />
+-    <path d="m21 21-4.3-4.3" />
+-  </svg>
+-)
+-
+-export const CopyIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <rect x="9" y="9" width="11" height="11" rx="2" />
+-    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+-  </svg>
+-)
+-
+-export const CheckIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M20 6 9 17l-5-5" />
+-  </svg>
+-)
+-
+-export const FlameIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M12 3c1 3-1 4-1 6a3 3 0 0 0 6 0c0-1 0-2-.5-3 2 2 3.5 4.5 3.5 7a8 8 0 1 1-16 0c0-3 2-5 3-7 1.5 2 3 1.5 5-3Z" />
+-  </svg>
+-)
+-
+-export const TrashIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M4 7h16M10 11v6M14 11v6M5 7l1 13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-13M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+-  </svg>
+-)
+-
+-export const EditIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M12 20h9" />
+-    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+-  </svg>
+-)
+-
+-export const DownloadIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+-  </svg>
+-)
+-
+-export const UploadIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M12 21V9M7 14l5-5 5 5M5 3h14" />
+-  </svg>
+-)
+-
+-export const ExternalIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+-  </svg>
+-)
+-
+-export const ArrowLeftIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M19 12H5M12 19l-7-7 7-7" />
+-  </svg>
+-)
+-
+-export const CloseIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M18 6 6 18M6 6l12 12" />
+-  </svg>
+-)
+-
+-export const BookIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z" />
+-    <path d="M4 19a2 2 0 0 0 2 2h13" />
+-  </svg>
+-)
+-
+-export const TargetIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <circle cx="12" cy="12" r="8" />
+-    <circle cx="12" cy="12" r="4" />
+-    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+-  </svg>
+-)
+-
+-export const CircleIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <circle cx="12" cy="12" r="8" />
+-  </svg>
+-)
+-
+-export const CircleDotIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <circle cx="12" cy="12" r="8" />
+-    <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+-  </svg>
+-)
+-
+-export const CircleCheckIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <circle cx="12" cy="12" r="8" />
+-    <path d="m8.5 12 2.5 2.5 4.5-5" />
+-  </svg>
+-)
+-
+-export const RefreshIcon = (p: IconProps) => (
+-  <svg {...base(p)}>
+-    <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+-    <path d="M21 3v5h-5" />
+-    <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+-    <path d="M3 21v-5h5" />
+-  </svg>
+-)
+diff --git a/src/index.css b/src/index.css
+index 0744b2b..786e393 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -18,54 +18,71 @@ body {
+ }
+ 
+ @layer components {
++  /* 브랜드 그라디언트 (한 곳에서만 정의) */
++  .bg-brand-gradient {
++    @apply bg-gradient-to-r from-indigo-500 via-brand-500 to-fuchsia-500;
++  }
++  .gradient-text {
++    @apply bg-brand-gradient bg-clip-text text-transparent;
++  }
++
+   /* 프로스티드 글래스 카드 */
+   .card {
+-    @apply rounded-2xl bg-white/60 backdrop-blur-xl border border-white/70
+-           shadow-xl shadow-indigo-300/20;
++    @apply rounded-card bg-white/60 backdrop-blur-xl border border-white/70 shadow-card;
++  }
++  .panel {
++    @apply rounded-panel bg-white/60 backdrop-blur-xl border border-white/70 shadow-card;
+   }
+   .card-hover {
+-    @apply transition duration-200 hover:bg-white/80 hover:shadow-2xl
+-           hover:shadow-indigo-300/30 hover:-translate-y-0.5;
++    @apply transition duration-200 hover:bg-white/80 hover:shadow-card-hover hover:-translate-y-0.5;
+   }
+ 
+   /* 입력 요소 */
+   .input {
+-    @apply w-full rounded-xl border border-slate-200/80 bg-white/70 px-3.5 py-2.5 text-sm
+-           shadow-sm transition
++    @apply w-full rounded-control border border-slate-200/80 bg-white/70 px-3.5 py-2.5 text-sm
++           shadow-control transition
+            placeholder:text-slate-400
+-           focus:outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100;
++           focus:outline-none focus:border-brand-300 focus:ring-4 focus:ring-brand-100;
+   }
+   select.input {
+     @apply pr-8 cursor-pointer;
+   }
+-
++  /* 검증 실패 입력 */
++  .input-error {
++    @apply border-rose-300 focus:border-rose-400 focus:ring-rose-100;
++  }
+   .field-label {
+     @apply block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1.5;
+   }
++  .field-error {
++    @apply mt-1.5 text-xs font-medium text-rose-600;
++  }
+ 
+-  /* 버튼 */
++  /* 버튼 — 모든 버튼에 hover/active/focus-visible 상태 명시 */
+   .btn {
+-    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm
+-           font-semibold transition active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none;
++    @apply inline-flex items-center justify-center gap-1.5 rounded-control px-4 py-2.5 text-sm
++           font-semibold transition active:scale-[0.97]
++           focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-200
++           disabled:opacity-50 disabled:pointer-events-none;
+   }
+   .btn-primary {
+-    @apply btn text-white
+-           bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500
+-           shadow-lg shadow-violet-400/30
+-           hover:shadow-xl hover:shadow-violet-400/40 hover:brightness-[1.07];
++    @apply btn text-white bg-brand-gradient shadow-lg shadow-brand-400/30
++           hover:shadow-xl hover:shadow-brand-400/40 hover:brightness-[1.07];
+   }
+   .btn-ghost {
+     @apply btn border border-slate-200/70 bg-white/60 text-slate-600 backdrop-blur
+            hover:bg-white hover:border-slate-300 hover:text-slate-800;
+   }
+   .btn-danger {
+-    @apply btn border border-rose-200 bg-rose-50/70 text-rose-600 hover:bg-rose-100;
++    @apply btn border border-rose-200 bg-rose-50/70 text-rose-600
++           hover:bg-rose-100 hover:border-rose-300
++           focus-visible:ring-rose-200;
+   }
+-
+-  /* 그라디언트 텍스트 */
+-  .gradient-text {
+-    @apply bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600
+-           bg-clip-text text-transparent;
++  /* 아이콘 전용 버튼 */
++  .icon-btn {
++    @apply grid place-items-center w-9 h-9 rounded-control text-slate-400 transition
++           hover:bg-slate-100 hover:text-slate-700 active:scale-95
++           focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-200;
+   }
+ 
+   /* 칩/태그 */
+@@ -76,7 +93,7 @@ body {
+ 
+   /* 스켈레톤 */
+   .skeleton {
+-    @apply relative overflow-hidden rounded-xl bg-slate-200/60;
++    @apply relative overflow-hidden rounded-control bg-slate-200/60;
+   }
+   .skeleton::after {
+     content: '';
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+index 3435dae..f835460 100644
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -5,13 +5,7 @@ import { useProblems } from '../hooks/useProblems'
+ import { exportBackup, importBackup } from '../lib/backup'
+ import { syncAll } from '../lib/db'
+ import { toast } from '../components/Toast'
+-import {
+-  DownloadIcon,
+-  UploadIcon,
+-  FlameIcon,
+-  ListIcon,
+-  CheckIcon,
+-} from '../components/icons'
++import { Download, Upload, Flame, List, Check } from 'lucide-react'
+ import { DIFFICULTIES, DIFFICULTY_LABELS, type Difficulty } from '../types'
+ 
+ const DIFF_BAR: Record<Difficulty, string> = {
+@@ -101,7 +95,7 @@ function StatCard({
+   return (
+     <div className="card card-hover p-5 flex flex-col justify-between">
+       <span
+-        className={`grid place-items-center w-10 h-10 rounded-xl text-white bg-gradient-to-br ${accent} shadow-lg`}
++        className={`grid place-items-center w-10 h-10 rounded-control text-white bg-gradient-to-br ${accent} shadow-lg`}
+       >
+         {icon}
+       </span>
+@@ -181,11 +175,11 @@ export default function Dashboard() {
+         </div>
+         <div className="flex gap-2">
+           <button onClick={() => exportBackup()} className="btn-ghost px-3">
+-            <DownloadIcon width={16} height={16} />
++            <Download size={16} />
+             <span className="hidden sm:inline">내보내기</span>
+           </button>
+           <button onClick={() => fileRef.current?.click()} className="btn-ghost px-3">
+-            <UploadIcon width={16} height={16} />
++            <Upload size={16} />
+             <span className="hidden sm:inline">불러오기</span>
+           </button>
+           <input
+@@ -219,25 +213,25 @@ export default function Dashboard() {
+           label="연속 학습일"
+           value={`${stats.streak}일`}
+           accent="from-orange-400 to-rose-500"
+-          icon={<FlameIcon width={20} height={20} />}
++          icon={<Flame size={20} />}
+         />
+         <StatCard
+           label="총 문제"
+           value={stats.total}
+           accent="from-indigo-400 to-violet-500"
+-          icon={<ListIcon width={20} height={20} />}
++          icon={<List size={20} />}
+         />
+         <StatCard
+           label="해결"
+           value={stats.solvedCount}
+           accent="from-emerald-400 to-teal-500"
+-          icon={<CheckIcon width={20} height={20} />}
++          icon={<Check size={20} />}
+         />
+         <StatCard
+           label="푸는 중"
+           value={stats.solvingCount}
+           accent="from-sky-400 to-blue-500"
+-          icon={<ListIcon width={20} height={20} />}
++          icon={<List size={20} />}
+         />
+ 
+         {/* 난이도별 진행도 */}
+diff --git a/src/pages/ProblemDetail.tsx b/src/pages/ProblemDetail.tsx
+index 03f5ee2..095a733 100644
+--- a/src/pages/ProblemDetail.tsx
++++ b/src/pages/ProblemDetail.tsx
+@@ -5,14 +5,7 @@ import { deleteProblem, updateProblem, useProblem } from '../hooks/useProblems'
+ import { DifficultyBadge, StatusBadge } from '../components/Badges'
+ import ProblemForm from '../components/ProblemForm'
+ import { toast } from '../components/Toast'
+-import {
+-  ArrowLeftIcon,
+-  CopyIcon,
+-  CheckIcon,
+-  EditIcon,
+-  TrashIcon,
+-  ExternalIcon,
+-} from '../components/icons'
++import { ArrowLeft, Copy, Check, SquarePen, Trash2, ExternalLink } from 'lucide-react'
+ 
+ function Stars({ value }: { value: number | null }) {
+   if (!value) return <span className="text-slate-300">—</span>
+@@ -38,9 +31,9 @@ function CopyButton({ code }: { code: string }) {
+           toast.error('복사에 실패했습니다.')
+         }
+       }}
+-      className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition"
++      className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/10 active:scale-95 transition"
+     >
+-      {copied ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
++      {copied ? <Check size={14} /> : <Copy size={14} />}
+       {copied ? '복사됨' : '복사'}
+     </button>
+   )
+@@ -65,7 +58,7 @@ export default function ProblemDetail() {
+     return (
+       <div className="card text-center py-16 text-slate-400">
+         문제를 찾을 수 없습니다.{' '}
+-        <Link to="/problems" className="text-violet-600 font-semibold underline">
++        <Link to="/problems" className="text-brand-600 font-semibold hover:underline">
+           목록으로
+         </Link>
+       </div>
+@@ -105,7 +98,7 @@ export default function ProblemDetail() {
+         to="/problems"
+         className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-600 font-medium"
+       >
+-        <ArrowLeftIcon width={16} height={16} />
++        <ArrowLeft size={16} />
+         목록
+       </Link>
+ 
+@@ -126,20 +119,20 @@ export default function ProblemDetail() {
+                   href={problem.url}
+                   target="_blank"
+                   rel="noreferrer"
+-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline"
++                  className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline"
+                 >
+-                  LeetCode <ExternalIcon width={13} height={13} />
++                  LeetCode <ExternalLink size={13} />
+                 </a>
+               )}
+             </div>
+           </div>
+           <div className="flex gap-2 shrink-0">
+             <button onClick={() => setEditing(true)} className="btn-ghost px-3">
+-              <EditIcon width={16} height={16} />
++              <SquarePen size={16} />
+               <span className="hidden sm:inline">수정</span>
+             </button>
+             <button onClick={handleDelete} className="btn-danger px-3">
+-              <TrashIcon width={16} height={16} />
++              <Trash2 size={16} />
+               <span className="hidden sm:inline">삭제</span>
+             </button>
+           </div>
+diff --git a/src/pages/Problems.tsx b/src/pages/Problems.tsx
+index 895b6b9..5ecadec 100644
+--- a/src/pages/Problems.tsx
++++ b/src/pages/Problems.tsx
+@@ -5,7 +5,7 @@ import { createProblem, useProblems } from '../hooks/useProblems'
+ import { DifficultyBadge, StatusBadge, DIFFICULTY_BAR } from '../components/Badges'
+ import ProblemForm from '../components/ProblemForm'
+ import { toast } from '../components/Toast'
+-import { PlusIcon, SearchIcon, CloseIcon, ListIcon } from '../components/icons'
++import { Plus, Search, X, List } from 'lucide-react'
+ import {
+   DIFFICULTY_LABELS,
+   STATUS_LABELS,
+@@ -98,23 +98,22 @@ export default function Problems() {
+                   className="chip gap-1 hover:bg-slate-200/80"
+                 >
+                   {f.label}
+-                  <CloseIcon width={12} height={12} />
++                  <X size={12} />
+                 </button>
+               ))
+             )}
+           </div>
+         </div>
+         <button onClick={() => setShowForm(true)} className="btn-primary shrink-0">
+-          <PlusIcon width={18} height={18} />새 문제
++          <Plus size={18} />새 문제
+         </button>
+       </div>
+ 
+       {/* 검색 / 태그 / 정렬 */}
+       <div className="card p-3 mb-5 flex flex-wrap gap-2">
+         <div className="relative flex-1 min-w-[180px]">
+-          <SearchIcon
+-            width={16}
+-            height={16}
++          <Search
++            size={16}
+             className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+           />
+           <input
+@@ -157,8 +156,8 @@ export default function Problems() {
+         </div>
+       ) : filtered.length === 0 ? (
+         <div className="card flex flex-col items-center text-center py-16 px-6">
+-          <span className="grid place-items-center w-14 h-14 rounded-2xl text-violet-500 bg-violet-100/70 mb-4">
+-            <ListIcon width={26} height={26} />
++          <span className="grid place-items-center w-14 h-14 rounded-card text-brand-500 bg-brand-100/70 mb-4">
++            <List size={26} />
+           </span>
+           <p className="font-semibold text-slate-600">
+             {problems.length === 0 ? '아직 문제가 없습니다' : '조건에 맞는 문제가 없습니다'}
+@@ -170,7 +169,7 @@ export default function Problems() {
+           </p>
+           {problems.length === 0 && (
+             <button onClick={() => setShowForm(true)} className="btn-primary mt-5">
+-              <PlusIcon width={18} height={18} />새 문제
++              <Plus size={18} />새 문제
+             </button>
+           )}
+         </div>
+@@ -216,11 +215,8 @@ export default function Problems() {
+           <div className="card w-full max-w-2xl my-8 p-6 animate-fade-up">
+             <div className="flex items-center justify-between mb-5">
+               <h2 className="text-lg font-bold">새 문제 추가</h2>
+-              <button
+-                onClick={() => setShowForm(false)}
+-                className="grid place-items-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+-              >
+-                <CloseIcon width={18} height={18} />
++              <button onClick={() => setShowForm(false)} className="icon-btn" aria-label="닫기">
++                <X size={18} />
+               </button>
+             </div>
+             <ProblemForm
+diff --git a/tailwind.config.js b/tailwind.config.js
+index 3c7f665..31d9ee8 100644
+--- a/tailwind.config.js
++++ b/tailwind.config.js
+@@ -1,15 +1,47 @@
+ /** @type {import('tailwindcss').Config} */
++
++// ── 디자인 토큰 ──────────────────────────────────────────────
++// 색상·라운드·그림자·간격을 여기서 한 번만 정의하고, 모든 페이지/
++// 컴포넌트는 이 토큰(과 index.css 의 .card/.btn/.input 등 토큰 클래스)만
++// 사용해 일관성을 유지한다.
++
+ export default {
+   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+   theme: {
+     extend: {
+       colors: {
++        // 브랜드(보라) 액센트 스케일
++        brand: {
++          50: '#f5f3ff',
++          100: '#ede9fe',
++          200: '#ddd6fe',
++          300: '#c4b5fd',
++          400: '#a78bfa',
++          500: '#8b5cf6',
++          600: '#7c3aed',
++          700: '#6d28d9',
++        },
++        // 의미 색상 (난이도)
+         difficulty: {
+-          easy: '#00b8a3',
+-          medium: '#ffb800',
+-          hard: '#ff375f',
++          easy: '#10b981',
++          medium: '#f59e0b',
++          hard: '#f43f5e',
+         },
+       },
++      borderRadius: {
++        control: '0.75rem', // 입력 요소·버튼·작은 항목
++        card: '1rem', // 카드
++        panel: '1.5rem', // 큰 패널(사이드바 등)
++      },
++      boxShadow: {
++        card: '0 10px 30px -12px rgba(99, 102, 241, 0.20)',
++        'card-hover': '0 20px 44px -16px rgba(124, 58, 237, 0.32)',
++        control: '0 1px 2px 0 rgba(15, 23, 42, 0.06)',
++      },
++      // 페이지 섹션 간 일관 간격 토큰
++      spacing: {
++        gutter: '1.5rem',
++      },
+       keyframes: {
+         'fade-up': {
+           '0%': { opacity: '0', transform: 'translateY(8px)' },
+-- 
+2.43.0
+

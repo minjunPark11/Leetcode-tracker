@@ -1,7 +1,7 @@
-From 63d86a2376309fde57c0c0538927f8d18cd5e94a Mon Sep 17 00:00:00 2001
+From f30dae66f3e1bbf076b42a43560a19de1475bc40 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Mon, 29 Jun 2026 10:11:47 +0000
-Subject: [PATCH] Stage 1 (MVP): scaffold LeetCode study tracker
+Date: Mon, 29 Jun 2026 10:39:42 +0000
+Subject: [PATCH 1/5] Stage 1 (MVP): scaffold LeetCode study tracker
 
 Vite + React + TS + Tailwind app with local-first architecture:
 - Dexie (IndexedDB) cache with background Supabase sync (last-write-wins)

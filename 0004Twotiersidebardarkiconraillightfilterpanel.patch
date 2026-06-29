@@ -1,0 +1,525 @@
+From 15408253d205fc8d9e4e3de965f3c80e7d5450c5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 11:08:42 +0000
+Subject: [PATCH 4/5] Two-tier sidebar: dark icon rail + light filter panel
+
+- Dark icon rail (logo + nav icons, selected highlighted) on the far left
+- Light-gray secondary panel on problem screens with Status/Difficulty
+  groups, per-item count badges, and gradient-accent selection pills
+- Status/difficulty filtering moved into the sidebar via URL query params
+  (toggleable, combinable); search/tag/sort remain in the content bar
+- Removable active-filter chips in the problems header
+- Filter panel hidden on dashboard (full-width)
+- New icons: target, circle/circle-dot/circle-check, refresh
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JJ2ALpPXcgcr9CfdzcsDU4
+---
+ src/App.tsx                       | 118 +++++++++++++-----------
+ src/components/ProblemSidebar.tsx | 146 ++++++++++++++++++++++++++++++
+ src/components/icons.tsx          |  37 ++++++++
+ src/pages/Problems.tsx            |  80 ++++++++--------
+ 4 files changed, 288 insertions(+), 93 deletions(-)
+ create mode 100644 src/components/ProblemSidebar.tsx
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 58c3ad2..830d2bf 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,86 +1,100 @@
+ import { useEffect, useState } from 'react'
+-import { NavLink, Route, Routes } from 'react-router-dom'
++import { Link, Route, Routes, useLocation } from 'react-router-dom'
+ import { syncAll } from './lib/db'
+ import { isSupabaseConfigured } from './lib/supabase'
+ import { Toaster } from './components/Toast'
+-import { BookIcon, GridIcon, ListIcon } from './components/icons'
++import ProblemSidebar from './components/ProblemSidebar'
++import { BookIcon, GridIcon, TargetIcon } from './components/icons'
+ import Dashboard from './pages/Dashboard'
+ import Problems from './pages/Problems'
+ import ProblemDetail from './pages/ProblemDetail'
+ 
+-const NAV = [
+-  { to: '/', label: '대시보드', Icon: GridIcon, end: true },
+-  { to: '/problems', label: '문제', Icon: ListIcon, end: false },
++const RAIL = [
++  { to: '/', label: '대시보드', Icon: GridIcon, match: (p: string) => p === '/' },
++  {
++    to: '/problems',
++    label: '문제',
++    Icon: TargetIcon,
++    match: (p: string) => p.startsWith('/problems'),
++  },
+ ]
+ 
+-function SyncBadge({ synced }: { synced: boolean }) {
++function RailIcon({
++  to,
++  label,
++  active,
++  children,
++}: {
++  to: string
++  label: string
++  active: boolean
++  children: React.ReactNode
++}) {
+   return (
+-    <div className="chip gap-1.5">
+-      <span
+-        className={`w-1.5 h-1.5 rounded-full ${
+-          !isSupabaseConfigured
+-            ? 'bg-slate-400'
+-            : synced
+-              ? 'bg-emerald-500'
+-              : 'bg-amber-400 animate-pulse'
+-        }`}
+-      />
+-      {isSupabaseConfigured ? (synced ? '동기화됨' : '동기화 중') : '로컬 전용'}
+-    </div>
++    <Link
++      to={to}
++      title={label}
++      aria-label={label}
++      className={`grid place-items-center w-11 h-11 rounded-2xl transition ${
++        active
++          ? 'bg-white/15 text-white shadow-lg'
++          : 'text-slate-500 hover:text-white hover:bg-white/10'
++      }`}
++    >
++      {children}
++    </Link>
+   )
+ }
+ 
+ export default function App() {
+   const [synced, setSynced] = useState(false)
++  const location = useLocation()
++  const showFilterPanel = location.pathname.startsWith('/problems')
+ 
+   // 앱 시작 시 1회 동기화 (push dirty → pull remote).
+   useEffect(() => {
+     syncAll().finally(() => setSynced(true))
+   }, [])
+ 
++  const syncColor = !isSupabaseConfigured
++    ? 'bg-slate-500'
++    : synced
++      ? 'bg-emerald-400'
++      : 'bg-amber-400 animate-pulse'
++
+   return (
+     <div className="min-h-screen flex">
+-      {/* 사이드바 */}
+-      <aside className="flex flex-col w-64 shrink-0 h-screen sticky top-0 p-4">
+-        <div className="card h-full flex flex-col p-4">
+-          <div className="flex items-center gap-2.5 px-2 py-3">
+-            <span className="grid place-items-center w-10 h-10 rounded-xl text-white bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-400/30">
+-              <BookIcon width={22} height={22} />
+-            </span>
+-            <div className="leading-tight">
+-              <div className="font-bold gradient-text">LeetCode</div>
+-              <div className="text-xs text-slate-400 font-medium">트래커</div>
+-            </div>
+-          </div>
+-
+-          <nav className="mt-4 flex flex-col gap-1">
+-            {NAV.map(({ to, label, Icon, end }) => (
+-              <NavLink
+-                key={to}
+-                to={to}
+-                end={end}
+-                className={({ isActive }) =>
+-                  `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+-                    isActive
+-                      ? 'text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-lg shadow-violet-400/30'
+-                      : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+-                  }`
+-                }
+-              >
+-                <Icon width={18} height={18} />
+-                {label}
+-              </NavLink>
++      {/* 다크 아이콘 레일 */}
++      <aside className="shrink-0 p-3 h-screen sticky top-0">
++        <div className="bg-slate-900 rounded-[26px] h-full w-[68px] flex flex-col items-center py-4">
++          <span className="grid place-items-center w-11 h-11 rounded-2xl text-white bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/30">
++            <BookIcon width={22} height={22} />
++          </span>
++          <nav className="mt-6 flex flex-col gap-2">
++            {RAIL.map(({ to, label, Icon, match }) => (
++              <RailIcon key={to} to={to} label={label} active={match(location.pathname)}>
++                <Icon width={20} height={20} />
++              </RailIcon>
+             ))}
+           </nav>
+-
+-          <div className="mt-auto px-1">
+-            <SyncBadge synced={synced} />
++          <div
++            className="mt-auto w-2.5 h-2.5 rounded-full"
++            title={isSupabaseConfigured ? (synced ? '동기화됨' : '동기화 중') : '로컬 전용'}
++          >
++            <span className={`block w-2.5 h-2.5 rounded-full ${syncColor}`} />
+           </div>
+         </div>
+       </aside>
+ 
++      {/* 필터 패널 (문제 화면에서만) */}
++      {showFilterPanel && (
++        <aside className="shrink-0 w-72 py-3 h-screen sticky top-0">
++          <ProblemSidebar />
++        </aside>
++      )}
++
+       {/* 콘텐츠 */}
+-      <main className="flex-1 min-w-0 px-4 py-6 lg:px-8">
++      <main className="flex-1 min-w-0 px-6 py-6">
+         <div className="max-w-5xl mx-auto w-full">
+           <Routes>
+             <Route path="/" element={<Dashboard />} />
+diff --git a/src/components/ProblemSidebar.tsx b/src/components/ProblemSidebar.tsx
+new file mode 100644
+index 0000000..042b3b0
+--- /dev/null
++++ b/src/components/ProblemSidebar.tsx
+@@ -0,0 +1,146 @@
++// 2단 사이드바의 "메인(옅은 회색)" 패널 — 문제 화면의 필터 내비게이션.
++// 상태(Status) / 난이도(Difficulty)를 그룹으로 묶고, 각 항목에 개수 배지를 표시한다.
++// 항목 클릭 시 URL 쿼리(?status=, ?difficulty=)를 토글하여 목록을 필터링한다.
++import { Link, useSearchParams } from 'react-router-dom'
++import { useProblems } from '../hooks/useProblems'
++import {
++  DIFFICULTIES,
++  DIFFICULTY_LABELS,
++  STATUSES,
++  STATUS_LABELS,
++  type Difficulty,
++  type Status,
++} from '../types'
++import {
++  ListIcon,
++  CircleIcon,
++  CircleDotIcon,
++  CircleCheckIcon,
++  RefreshIcon,
++} from './icons'
++import type { ComponentType, SVGProps } from 'react'
++
++const STATUS_ICON: Record<Status, ComponentType<SVGProps<SVGSVGElement>>> = {
++  todo: CircleIcon,
++  solving: CircleDotIcon,
++  solved: CircleCheckIcon,
++  review: RefreshIcon,
++}
++
++const DIFF_DOT: Record<Difficulty, string> = {
++  easy: 'bg-emerald-400',
++  medium: 'bg-amber-400',
++  hard: 'bg-rose-400',
++}
++
++function Row({
++  to,
++  active,
++  label,
++  count,
++  icon,
++}: {
++  to: string
++  active: boolean
++  label: string
++  count: number
++  icon: React.ReactNode
++}) {
++  return (
++    <Link
++      to={to}
++      className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
++        active
++          ? 'bg-gradient-to-r from-violet-100 to-fuchsia-100 text-violet-700 shadow-sm shadow-violet-200/50'
++          : 'text-slate-600 hover:bg-white/70'
++      }`}
++    >
++      <span
++        className={`shrink-0 ${active ? 'text-violet-500' : 'text-slate-400 group-hover:text-slate-500'}`}
++      >
++        {icon}
++      </span>
++      <span className="flex-1 truncate">{label}</span>
++      <span
++        className={`text-xs font-bold tabular-nums ${
++          active ? 'text-violet-400' : 'text-slate-300'
++        }`}
++      >
++        {count}
++      </span>
++    </Link>
++  )
++}
++
++function SectionLabel({ children }: { children: React.ReactNode }) {
++  return (
++    <div className="px-3 pt-4 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
++      {children}
++    </div>
++  )
++}
++
++export default function ProblemSidebar() {
++  const problems = useProblems()
++  const [params] = useSearchParams()
++  const curStatus = params.get('status')
++  const curDiff = params.get('difficulty')
++  const list = problems ?? []
++
++  // 현재 쿼리를 기준으로 key 를 토글한 href 생성.
++  function href(key: 'status' | 'difficulty', value: string) {
++    const p = new URLSearchParams(params)
++    if (p.get(key) === value) p.delete(key)
++    else p.set(key, value)
++    const s = p.toString()
++    return s ? `/problems?${s}` : '/problems'
++  }
++
++  const statusCount = (s: Status) => list.filter((p) => p.status === s).length
++  const diffCount = (d: Difficulty) => list.filter((p) => p.difficulty === d).length
++
++  return (
++    <div className="card !rounded-3xl h-full flex flex-col p-3 overflow-y-auto">
++      <h2 className="px-3 pt-2 pb-3 text-xl font-extrabold tracking-tight">문제</h2>
++
++      <Row
++        to="/problems"
++        active={!curStatus && !curDiff}
++        label="전체"
++        count={list.length}
++        icon={<ListIcon width={18} height={18} />}
++      />
++
++      <div className="mx-3 my-1 border-t border-slate-200/70" />
++
++      <SectionLabel>상태</SectionLabel>
++      {STATUSES.map((s) => {
++        const Icon = STATUS_ICON[s]
++        return (
++          <Row
++            key={s}
++            to={href('status', s)}
++            active={curStatus === s}
++            label={STATUS_LABELS[s]}
++            count={statusCount(s)}
++            icon={<Icon width={18} height={18} />}
++          />
++        )
++      })}
++
++      <div className="mx-3 my-1 border-t border-slate-200/70" />
++
++      <SectionLabel>난이도</SectionLabel>
++      {DIFFICULTIES.map((d) => (
++        <Row
++          key={d}
++          to={href('difficulty', d)}
++          active={curDiff === d}
++          label={DIFFICULTY_LABELS[d]}
++          count={diffCount(d)}
++          icon={<span className={`block w-2.5 h-2.5 rounded-full ${DIFF_DOT[d]}`} />}
++        />
++      ))}
++    </div>
++  )
++}
+diff --git a/src/components/icons.tsx b/src/components/icons.tsx
+index 1ec565b..666295f 100644
+--- a/src/components/icons.tsx
++++ b/src/components/icons.tsx
+@@ -114,3 +114,40 @@ export const BookIcon = (p: IconProps) => (
+     <path d="M4 19a2 2 0 0 0 2 2h13" />
+   </svg>
+ )
++
++export const TargetIcon = (p: IconProps) => (
++  <svg {...base(p)}>
++    <circle cx="12" cy="12" r="8" />
++    <circle cx="12" cy="12" r="4" />
++    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
++  </svg>
++)
++
++export const CircleIcon = (p: IconProps) => (
++  <svg {...base(p)}>
++    <circle cx="12" cy="12" r="8" />
++  </svg>
++)
++
++export const CircleDotIcon = (p: IconProps) => (
++  <svg {...base(p)}>
++    <circle cx="12" cy="12" r="8" />
++    <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
++  </svg>
++)
++
++export const CircleCheckIcon = (p: IconProps) => (
++  <svg {...base(p)}>
++    <circle cx="12" cy="12" r="8" />
++    <path d="m8.5 12 2.5 2.5 4.5-5" />
++  </svg>
++)
++
++export const RefreshIcon = (p: IconProps) => (
++  <svg {...base(p)}>
++    <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
++    <path d="M21 3v5h-5" />
++    <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
++    <path d="M3 21v-5h5" />
++  </svg>
++)
+diff --git a/src/pages/Problems.tsx b/src/pages/Problems.tsx
+index c431928..895b6b9 100644
+--- a/src/pages/Problems.tsx
++++ b/src/pages/Problems.tsx
+@@ -1,15 +1,13 @@
+-// 문제 목록: 난이도·태그·상태 필터, 검색, 정렬, 생성 모달.
++// 문제 목록: 검색·태그·정렬은 상단 바에서, 상태·난이도 필터는 좌측 사이드바(URL 쿼리)에서.
+ import { useMemo, useState } from 'react'
+-import { Link } from 'react-router-dom'
++import { Link, useSearchParams } from 'react-router-dom'
+ import { createProblem, useProblems } from '../hooks/useProblems'
+ import { DifficultyBadge, StatusBadge, DIFFICULTY_BAR } from '../components/Badges'
+ import ProblemForm from '../components/ProblemForm'
+ import { toast } from '../components/Toast'
+ import { PlusIcon, SearchIcon, CloseIcon, ListIcon } from '../components/icons'
+ import {
+-  DIFFICULTIES,
+   DIFFICULTY_LABELS,
+-  STATUSES,
+   STATUS_LABELS,
+   type Difficulty,
+   type Status,
+@@ -20,14 +18,17 @@ const DIFFICULTY_ORDER: Record<Difficulty, number> = { easy: 0, medium: 1, hard:
+ 
+ export default function Problems() {
+   const problems = useProblems()
++  const [params, setParams] = useSearchParams()
+   const [showForm, setShowForm] = useState(false)
+ 
+   const [search, setSearch] = useState('')
+-  const [difficulty, setDifficulty] = useState<Difficulty | 'all'>('all')
+-  const [status, setStatus] = useState<Status | 'all'>('all')
+   const [tag, setTag] = useState<string>('all')
+   const [sort, setSort] = useState<SortKey>('updated')
+ 
++  // 상태·난이도는 사이드바가 설정하는 URL 쿼리에서 읽는다.
++  const status = (params.get('status') as Status | null) ?? null
++  const difficulty = (params.get('difficulty') as Difficulty | null) ?? null
++
+   const allTags = useMemo(() => {
+     const set = new Set<string>()
+     problems?.forEach((p) => p.tags.forEach((t) => set.add(t)))
+@@ -38,8 +39,8 @@ export default function Problems() {
+     if (!problems) return []
+     const q = search.trim().toLowerCase()
+     const list = problems.filter((p) => {
+-      if (difficulty !== 'all' && p.difficulty !== difficulty) return false
+-      if (status !== 'all' && p.status !== status) return false
++      if (difficulty && p.difficulty !== difficulty) return false
++      if (status && p.status !== status) return false
+       if (tag !== 'all' && !p.tags.includes(tag)) return false
+       if (q) {
+         const hay = `${p.number ?? ''} ${p.title} ${p.tags.join(' ')}`.toLowerCase()
+@@ -65,6 +66,17 @@ export default function Problems() {
+     return list
+   }, [problems, search, difficulty, status, tag, sort])
+ 
++  const activeFacets = [
++    status && { key: 'status', label: STATUS_LABELS[status] },
++    difficulty && { key: 'difficulty', label: DIFFICULTY_LABELS[difficulty] },
++  ].filter(Boolean) as { key: string; label: string }[]
++
++  function clearFacet(key: string) {
++    const p = new URLSearchParams(params)
++    p.delete(key)
++    setParams(p)
++  }
++
+   return (
+     <div className="animate-fade-up">
+       <div className="flex items-center justify-between gap-3 mb-5">
+@@ -72,22 +84,32 @@ export default function Problems() {
+           <h1 className="text-2xl font-extrabold tracking-tight">
+             문제{' '}
+             {problems && (
+-              <span className="text-slate-300 text-xl font-bold">
+-                {problems.length}
+-              </span>
++              <span className="text-slate-300 text-xl font-bold">{filtered.length}</span>
+             )}
+           </h1>
+-          <p className="text-sm text-slate-400 mt-0.5">
+-            풀이·메모·복잡도를 한곳에서 관리하세요.
+-          </p>
++          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
++            {activeFacets.length === 0 ? (
++              <p className="text-sm text-slate-400">풀이·메모·복잡도를 한곳에서 관리하세요.</p>
++            ) : (
++              activeFacets.map((f) => (
++                <button
++                  key={f.key}
++                  onClick={() => clearFacet(f.key)}
++                  className="chip gap-1 hover:bg-slate-200/80"
++                >
++                  {f.label}
++                  <CloseIcon width={12} height={12} />
++                </button>
++              ))
++            )}
++          </div>
+         </div>
+         <button onClick={() => setShowForm(true)} className="btn-primary shrink-0">
+-          <PlusIcon width={18} height={18} />
+-          <span className="hidden sm:inline">새 문제</span>
++          <PlusIcon width={18} height={18} />새 문제
+         </button>
+       </div>
+ 
+-      {/* 필터 바 */}
++      {/* 검색 / 태그 / 정렬 */}
+       <div className="card p-3 mb-5 flex flex-wrap gap-2">
+         <div className="relative flex-1 min-w-[180px]">
+           <SearchIcon
+@@ -102,30 +124,6 @@ export default function Problems() {
+             onChange={(e) => setSearch(e.target.value)}
+           />
+         </div>
+-        <select
+-          className="input w-auto"
+-          value={difficulty}
+-          onChange={(e) => setDifficulty(e.target.value as Difficulty | 'all')}
+-        >
+-          <option value="all">난이도 전체</option>
+-          {DIFFICULTIES.map((d) => (
+-            <option key={d} value={d}>
+-              {DIFFICULTY_LABELS[d]}
+-            </option>
+-          ))}
+-        </select>
+-        <select
+-          className="input w-auto"
+-          value={status}
+-          onChange={(e) => setStatus(e.target.value as Status | 'all')}
+-        >
+-          <option value="all">상태 전체</option>
+-          {STATUSES.map((s) => (
+-            <option key={s} value={s}>
+-              {STATUS_LABELS[s]}
+-            </option>
+-          ))}
+-        </select>
+         <select
+           className="input w-auto"
+           value={tag}
+-- 
+2.43.0
+
