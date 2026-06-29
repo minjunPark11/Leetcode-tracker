@@ -11,20 +11,13 @@ import {
   type Difficulty,
   type Status,
 } from '../types'
-import {
-  ListIcon,
-  CircleIcon,
-  CircleDotIcon,
-  CircleCheckIcon,
-  RefreshIcon,
-} from './icons'
-import type { ComponentType, SVGProps } from 'react'
+import { List, Circle, CircleDot, CircleCheck, RefreshCw, type LucideIcon } from 'lucide-react'
 
-const STATUS_ICON: Record<Status, ComponentType<SVGProps<SVGSVGElement>>> = {
-  todo: CircleIcon,
-  solving: CircleDotIcon,
-  solved: CircleCheckIcon,
-  review: RefreshIcon,
+const STATUS_ICON: Record<Status, LucideIcon> = {
+  todo: Circle,
+  solving: CircleDot,
+  solved: CircleCheck,
+  review: RefreshCw,
 }
 
 const DIFF_DOT: Record<Difficulty, string> = {
@@ -49,21 +42,22 @@ function Row({
   return (
     <Link
       to={to}
-      className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+      className={`group flex items-center gap-3 rounded-control px-3 py-2.5 text-sm font-semibold transition
+        active:scale-[0.98] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-200 ${
         active
-          ? 'bg-gradient-to-r from-violet-100 to-fuchsia-100 text-violet-700 shadow-sm shadow-violet-200/50'
-          : 'text-slate-600 hover:bg-white/70'
+          ? 'bg-gradient-to-r from-brand-100 to-fuchsia-100 text-brand-700 shadow-sm shadow-brand-200/50'
+          : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
       }`}
     >
       <span
-        className={`shrink-0 ${active ? 'text-violet-500' : 'text-slate-400 group-hover:text-slate-500'}`}
+        className={`shrink-0 ${active ? 'text-brand-500' : 'text-slate-400 group-hover:text-slate-500'}`}
       >
         {icon}
       </span>
       <span className="flex-1 truncate">{label}</span>
       <span
         className={`text-xs font-bold tabular-nums ${
-          active ? 'text-violet-400' : 'text-slate-300'
+          active ? 'text-brand-400' : 'text-slate-300'
         }`}
       >
         {count}
@@ -100,7 +94,7 @@ export default function ProblemSidebar() {
   const diffCount = (d: Difficulty) => list.filter((p) => p.difficulty === d).length
 
   return (
-    <div className="card !rounded-3xl h-full flex flex-col p-3 overflow-y-auto">
+    <div className="panel h-full flex flex-col p-3 overflow-y-auto">
       <h2 className="px-3 pt-2 pb-3 text-xl font-extrabold tracking-tight">문제</h2>
 
       <Row
@@ -108,7 +102,7 @@ export default function ProblemSidebar() {
         active={!curStatus && !curDiff}
         label="전체"
         count={list.length}
-        icon={<ListIcon width={18} height={18} />}
+        icon={<List size={18} />}
       />
 
       <div className="mx-3 my-1 border-t border-slate-200/70" />
@@ -123,7 +117,7 @@ export default function ProblemSidebar() {
             active={curStatus === s}
             label={STATUS_LABELS[s]}
             count={statusCount(s)}
-            icon={<Icon width={18} height={18} />}
+            icon={<Icon size={18} />}
           />
         )
       })}

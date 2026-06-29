@@ -4,17 +4,17 @@ import { syncAll } from './lib/db'
 import { isSupabaseConfigured } from './lib/supabase'
 import { Toaster } from './components/Toast'
 import ProblemSidebar from './components/ProblemSidebar'
-import { BookIcon, GridIcon, TargetIcon } from './components/icons'
+import { Code2, LayoutDashboard, ListChecks } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Problems from './pages/Problems'
 import ProblemDetail from './pages/ProblemDetail'
 
 const RAIL = [
-  { to: '/', label: '대시보드', Icon: GridIcon, match: (p: string) => p === '/' },
+  { to: '/', label: '대시보드', Icon: LayoutDashboard, match: (p: string) => p === '/' },
   {
     to: '/problems',
     label: '문제',
-    Icon: TargetIcon,
+    Icon: ListChecks,
     match: (p: string) => p.startsWith('/problems'),
   },
 ]
@@ -35,10 +35,11 @@ function RailIcon({
       to={to}
       title={label}
       aria-label={label}
-      className={`grid place-items-center w-11 h-11 rounded-2xl transition ${
+      className={`grid place-items-center w-11 h-11 rounded-control transition active:scale-95
+        focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-400/40 ${
         active
           ? 'bg-white/15 text-white shadow-lg'
-          : 'text-slate-500 hover:text-white hover:bg-white/10'
+          : 'text-slate-400 hover:text-white hover:bg-white/10'
       }`}
     >
       {children}
@@ -66,14 +67,14 @@ export default function App() {
     <div className="min-h-screen flex">
       {/* 다크 아이콘 레일 */}
       <aside className="shrink-0 p-3 h-screen sticky top-0">
-        <div className="bg-slate-900 rounded-[26px] h-full w-[68px] flex flex-col items-center py-4">
-          <span className="grid place-items-center w-11 h-11 rounded-2xl text-white bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/30">
-            <BookIcon width={22} height={22} />
+        <div className="bg-slate-900 rounded-panel h-full w-[68px] flex flex-col items-center py-4">
+          <span className="grid place-items-center w-11 h-11 rounded-control text-white bg-brand-gradient shadow-lg shadow-brand-500/30">
+            <Code2 size={22} />
           </span>
           <nav className="mt-6 flex flex-col gap-2">
             {RAIL.map(({ to, label, Icon, match }) => (
               <RailIcon key={to} to={to} label={label} active={match(location.pathname)}>
-                <Icon width={20} height={20} />
+                <Icon size={20} />
               </RailIcon>
             ))}
           </nav>

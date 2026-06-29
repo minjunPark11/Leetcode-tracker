@@ -1,4 +1,5 @@
 // 문제 생성/수정 폼. 생성과 수정 양쪽에서 재사용.
+// 검증 실패 시 "무엇이 / 왜 / 어떻게 고칠지"를 알려주는 구체적 메시지를 필드별로 표시한다.
 import { useState } from 'react'
 import {
   DIFFICULTIES,
@@ -8,6 +9,7 @@ import {
   type Problem,
   type ProblemInput,
 } from '../types'
+import { toast } from './Toast'
 
 interface Props {
   initial?: Problem
@@ -16,8 +18,7 @@ interface Props {
   submitLabel?: string
 }
 
-const field = 'input'
-const label = 'field-label'
+type Errors = Partial<Record<'number' | 'title' | 'url' | 'perceived', string>>
 
 export default function ProblemForm({
   initial,
@@ -39,11 +40,48 @@ export default function ProblemForm({
   const [perceived, setPerceived] = useState(
     initial?.perceived_difficulty?.toString() ?? '',
   )
+  const [errors, setErrors] = useState<Errors>({})
   const [saving, setSaving] = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) return
+  // 무엇이 잘못됐는지 + 어떻게 고치는지 구체적으로 안내.
+  function validate(): Errors {
+    const e: Errors = {}
+    if (!title.trim()) {
+      e.title = '제목을 입력해주세요. (예: Two Sum)'
+    }
+    if (number.trim()) {
+      const n = Number(number)
+      if (!Number.isInteger(n) || n <= 0) {
+        e.number = '문제 번호는 1 이상의 정수로 입력해주세요. (예: 1)'
+      }
+    }
+    if (url.trim() && !/^https?:\/\//i.test(url.trim())) {
+      e.url = 'URL은 http:// 또는 https:// 로 시작해야 합니다.'
+    }
+    if (perceived.trim()) {
+      const n = Number(perceived)
+      if (!Number.isInteger(n) || n < 1 || n > 5) {
+        e.perceived = '체감 난이도는 1부터 5 사이의 숫자로 입력해주세요.'
+      }
+    }
+    return e
+  }
+
+  const clearError = (key: keyof Errors) =>
+    setErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev))
+
+  async function handleSubmit(ev: React.FormEvent) {
+    ev.preventDefault()
+    const e = validate()
+    setErrors(e)
+    if (Object.keys(e).length > 0) {
+      // 첫 번째 오류 필드로 포커스 이동 + 요약 토스트.
+      const first = (Object.keys(e) as (keyof Errors)[])[0]
+      document.getElementById(`field-${first}`)?.focus()
+      toast.error('입력값을 확인해주세요. 표시된 항목을 수정하면 저장할 수 있어요.')
+      return
+    }
+
     setSaving(true)
     const input: ProblemInput = {
       number: number.trim() ? parseInt(number, 10) : null,
@@ -69,46 +107,75 @@ export default function ProblemForm({
     }
   }
 
+  const inputCls = (key?: keyof Errors) =>
+    `input ${key && errors[key] ? 'input-error' : ''}`
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div>
-          <label className={label}>번호</label>
+          <label htmlFor="field-number" className="field-label">
+            번호
+          </label>
           <input
-            className={field}
+            id="field-number"
+            className={inputCls('number')}
             value={number}
-            onChange={(e) => setNumber(e.target.value)}
+            onChange={(e) => {
+              setNumber(e.target.value)
+              clearError('number')
+            }}
             placeholder="예: 1"
             inputMode="numeric"
+            aria-invalid={!!errors.number}
           />
+          {errors.number && <p className="field-error">{errors.number}</p>}
         </div>
         <div className="sm:col-span-3">
-          <label className={label}>제목 *</label>
+          <label htmlFor="field-title" className="field-label">
+            제목 <span className="text-rose-500">*</span>
+          </label>
           <input
-            className={field}
+            id="field-title"
+            className={inputCls('title')}
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Two Sum"
-            required
+            onChange={(e) => {
+              setTitle(e.target.value)
+              clearError('title')
+            }}
+            placeholder="문제 제목 (예: Two Sum)"
+            aria-invalid={!!errors.title}
           />
+          {errors.title && <p className="field-error">{errors.title}</p>}
         </div>
       </div>
 
       <div>
-        <label className={label}>URL</label>
+        <label htmlFor="field-url" className="field-label">
+          URL
+        </label>
         <input
-          className={field}
+          id="field-url"
+          className={inputCls('url')}
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => {
+            setUrl(e.target.value)
+            clearError('url')
+          }}
           placeholder="https://leetcode.com/problems/two-sum/"
+          aria-invalid={!!errors.url}
         />
+        {errors.url && <p className="field-error">{errors.url}</p>}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div>
-          <label className={label}>난이도</label>
+          <label htmlFor="field-difficulty" className="field-label">
+            난이도
+          </label>
           <select
-            className={field}
+            id="field-difficulty"
+            className="input"
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value as typeof difficulty)}
           >
@@ -120,9 +187,12 @@ export default function ProblemForm({
           </select>
         </div>
         <div>
-          <label className={label}>상태</label>
+          <label htmlFor="field-status" className="field-label">
+            상태
+          </label>
           <select
-            className={field}
+            id="field-status"
+            className="input"
             value={status}
             onChange={(e) => setStatus(e.target.value as typeof status)}
           >
@@ -134,30 +204,44 @@ export default function ProblemForm({
           </select>
         </div>
         <div>
-          <label className={label}>언어</label>
+          <label htmlFor="field-language" className="field-label">
+            언어
+          </label>
           <input
-            className={field}
+            id="field-language"
+            className="input"
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
             placeholder="python"
           />
         </div>
         <div>
-          <label className={label}>체감 난이도 (1~5)</label>
+          <label htmlFor="field-perceived" className="field-label">
+            체감 난이도 (1~5)
+          </label>
           <input
-            className={field}
+            id="field-perceived"
+            className={inputCls('perceived')}
             value={perceived}
-            onChange={(e) => setPerceived(e.target.value)}
-            placeholder="3"
+            onChange={(e) => {
+              setPerceived(e.target.value)
+              clearError('perceived')
+            }}
+            placeholder="예: 3"
             inputMode="numeric"
+            aria-invalid={!!errors.perceived}
           />
+          {errors.perceived && <p className="field-error">{errors.perceived}</p>}
         </div>
       </div>
 
       <div>
-        <label className={label}>태그 (쉼표로 구분)</label>
+        <label htmlFor="field-tags" className="field-label">
+          태그 (쉼표로 구분)
+        </label>
         <input
-          className={field}
+          id="field-tags"
+          className="input"
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           placeholder="array, hash-table"
@@ -166,18 +250,24 @@ export default function ProblemForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={label}>시간 복잡도</label>
+          <label htmlFor="field-time" className="field-label">
+            시간 복잡도
+          </label>
           <input
-            className={field}
+            id="field-time"
+            className="input"
             value={timeC}
             onChange={(e) => setTimeC(e.target.value)}
             placeholder="O(n)"
           />
         </div>
         <div>
-          <label className={label}>공간 복잡도</label>
+          <label htmlFor="field-space" className="field-label">
+            공간 복잡도
+          </label>
           <input
-            className={field}
+            id="field-space"
+            className="input"
             value={spaceC}
             onChange={(e) => setSpaceC(e.target.value)}
             placeholder="O(n)"
@@ -186,20 +276,26 @@ export default function ProblemForm({
       </div>
 
       <div>
-        <label className={label}>풀이 코드</label>
+        <label htmlFor="field-code" className="field-label">
+          풀이 코드
+        </label>
         <textarea
-          className={`${field} font-mono`}
+          id="field-code"
+          className="input font-mono"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           rows={8}
-          placeholder="class Solution:&#10;    def twoSum(self, nums, target):"
+          placeholder={'class Solution:\n    def twoSum(self, nums, target):'}
         />
       </div>
 
       <div>
-        <label className={label}>메모</label>
+        <label htmlFor="field-notes" className="field-label">
+          메모
+        </label>
         <textarea
-          className={field}
+          id="field-notes"
+          className="input"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={4}

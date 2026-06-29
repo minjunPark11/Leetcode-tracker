@@ -1,7 +1,7 @@
 // 가벼운 토스트 알림. 모듈 스토어 + <Toaster/> 로 구성하며,
 // 어디서든 toast.success(...) / toast.error(...) 로 호출한다.
 import { useEffect, useState } from 'react'
-import { CheckIcon, CloseIcon } from './icons'
+import { Check, X } from 'lucide-react'
 
 type ToastKind = 'success' | 'error' | 'info'
 interface ToastItem {
@@ -66,9 +66,9 @@ export function Toaster() {
             className={`shrink-0 grid place-items-center w-6 h-6 rounded-full text-white ${DOT[t.kind]}`}
           >
             {t.kind === 'success' ? (
-              <CheckIcon width={14} height={14} strokeWidth={3} />
+              <Check size={14} strokeWidth={3} />
             ) : (
-              <CloseIcon width={14} height={14} strokeWidth={3} />
+              <X size={14} strokeWidth={3} />
             )}
           </span>
           <span className="text-sm font-medium text-slate-700">{t.message}</span>

@@ -5,14 +5,7 @@ import { deleteProblem, updateProblem, useProblem } from '../hooks/useProblems'
 import { DifficultyBadge, StatusBadge } from '../components/Badges'
 import ProblemForm from '../components/ProblemForm'
 import { toast } from '../components/Toast'
-import {
-  ArrowLeftIcon,
-  CopyIcon,
-  CheckIcon,
-  EditIcon,
-  TrashIcon,
-  ExternalIcon,
-} from '../components/icons'
+import { ArrowLeft, Copy, Check, SquarePen, Trash2, ExternalLink } from 'lucide-react'
 
 function Stars({ value }: { value: number | null }) {
   if (!value) return <span className="text-slate-300">—</span>
@@ -38,9 +31,9 @@ function CopyButton({ code }: { code: string }) {
           toast.error('복사에 실패했습니다.')
         }
       }}
-      className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition"
+      className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/10 active:scale-95 transition"
     >
-      {copied ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
+      {copied ? <Check size={14} /> : <Copy size={14} />}
       {copied ? '복사됨' : '복사'}
     </button>
   )
@@ -65,7 +58,7 @@ export default function ProblemDetail() {
     return (
       <div className="card text-center py-16 text-slate-400">
         문제를 찾을 수 없습니다.{' '}
-        <Link to="/problems" className="text-violet-600 font-semibold underline">
+        <Link to="/problems" className="text-brand-600 font-semibold hover:underline">
           목록으로
         </Link>
       </div>
@@ -105,7 +98,7 @@ export default function ProblemDetail() {
         to="/problems"
         className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-600 font-medium"
       >
-        <ArrowLeftIcon width={16} height={16} />
+        <ArrowLeft size={16} />
         목록
       </Link>
 
@@ -126,20 +119,20 @@ export default function ProblemDetail() {
                   href={problem.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline"
                 >
-                  LeetCode <ExternalIcon width={13} height={13} />
+                  LeetCode <ExternalLink size={13} />
                 </a>
               )}
             </div>
           </div>
           <div className="flex gap-2 shrink-0">
             <button onClick={() => setEditing(true)} className="btn-ghost px-3">
-              <EditIcon width={16} height={16} />
+              <SquarePen size={16} />
               <span className="hidden sm:inline">수정</span>
             </button>
             <button onClick={handleDelete} className="btn-danger px-3">
-              <TrashIcon width={16} height={16} />
+              <Trash2 size={16} />
               <span className="hidden sm:inline">삭제</span>
             </button>
           </div>

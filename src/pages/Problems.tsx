@@ -5,7 +5,7 @@ import { createProblem, useProblems } from '../hooks/useProblems'
 import { DifficultyBadge, StatusBadge, DIFFICULTY_BAR } from '../components/Badges'
 import ProblemForm from '../components/ProblemForm'
 import { toast } from '../components/Toast'
-import { PlusIcon, SearchIcon, CloseIcon, ListIcon } from '../components/icons'
+import { Plus, Search, X, List } from 'lucide-react'
 import {
   DIFFICULTY_LABELS,
   STATUS_LABELS,
@@ -98,23 +98,22 @@ export default function Problems() {
                   className="chip gap-1 hover:bg-slate-200/80"
                 >
                   {f.label}
-                  <CloseIcon width={12} height={12} />
+                  <X size={12} />
                 </button>
               ))
             )}
           </div>
         </div>
         <button onClick={() => setShowForm(true)} className="btn-primary shrink-0">
-          <PlusIcon width={18} height={18} />새 문제
+          <Plus size={18} />새 문제
         </button>
       </div>
 
       {/* 검색 / 태그 / 정렬 */}
       <div className="card p-3 mb-5 flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[180px]">
-          <SearchIcon
-            width={16}
-            height={16}
+          <Search
+            size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <input
@@ -157,8 +156,8 @@ export default function Problems() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="card flex flex-col items-center text-center py-16 px-6">
-          <span className="grid place-items-center w-14 h-14 rounded-2xl text-violet-500 bg-violet-100/70 mb-4">
-            <ListIcon width={26} height={26} />
+          <span className="grid place-items-center w-14 h-14 rounded-card text-brand-500 bg-brand-100/70 mb-4">
+            <List size={26} />
           </span>
           <p className="font-semibold text-slate-600">
             {problems.length === 0 ? '아직 문제가 없습니다' : '조건에 맞는 문제가 없습니다'}
@@ -170,7 +169,7 @@ export default function Problems() {
           </p>
           {problems.length === 0 && (
             <button onClick={() => setShowForm(true)} className="btn-primary mt-5">
-              <PlusIcon width={18} height={18} />새 문제
+              <Plus size={18} />새 문제
             </button>
           )}
         </div>
@@ -216,11 +215,8 @@ export default function Problems() {
           <div className="card w-full max-w-2xl my-8 p-6 animate-fade-up">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-bold">새 문제 추가</h2>
-              <button
-                onClick={() => setShowForm(false)}
-                className="grid place-items-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <CloseIcon width={18} height={18} />
+              <button onClick={() => setShowForm(false)} className="icon-btn" aria-label="닫기">
+                <X size={18} />
               </button>
             </div>
             <ProblemForm

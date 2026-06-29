@@ -5,13 +5,7 @@ import { useProblems } from '../hooks/useProblems'
 import { exportBackup, importBackup } from '../lib/backup'
 import { syncAll } from '../lib/db'
 import { toast } from '../components/Toast'
-import {
-  DownloadIcon,
-  UploadIcon,
-  FlameIcon,
-  ListIcon,
-  CheckIcon,
-} from '../components/icons'
+import { Download, Upload, Flame, List, Check } from 'lucide-react'
 import { DIFFICULTIES, DIFFICULTY_LABELS, type Difficulty } from '../types'
 
 const DIFF_BAR: Record<Difficulty, string> = {
@@ -101,7 +95,7 @@ function StatCard({
   return (
     <div className="card card-hover p-5 flex flex-col justify-between">
       <span
-        className={`grid place-items-center w-10 h-10 rounded-xl text-white bg-gradient-to-br ${accent} shadow-lg`}
+        className={`grid place-items-center w-10 h-10 rounded-control text-white bg-gradient-to-br ${accent} shadow-lg`}
       >
         {icon}
       </span>
@@ -181,11 +175,11 @@ export default function Dashboard() {
         </div>
         <div className="flex gap-2">
           <button onClick={() => exportBackup()} className="btn-ghost px-3">
-            <DownloadIcon width={16} height={16} />
+            <Download size={16} />
             <span className="hidden sm:inline">내보내기</span>
           </button>
           <button onClick={() => fileRef.current?.click()} className="btn-ghost px-3">
-            <UploadIcon width={16} height={16} />
+            <Upload size={16} />
             <span className="hidden sm:inline">불러오기</span>
           </button>
           <input
@@ -219,25 +213,25 @@ export default function Dashboard() {
           label="연속 학습일"
           value={`${stats.streak}일`}
           accent="from-orange-400 to-rose-500"
-          icon={<FlameIcon width={20} height={20} />}
+          icon={<Flame size={20} />}
         />
         <StatCard
           label="총 문제"
           value={stats.total}
           accent="from-indigo-400 to-violet-500"
-          icon={<ListIcon width={20} height={20} />}
+          icon={<List size={20} />}
         />
         <StatCard
           label="해결"
           value={stats.solvedCount}
           accent="from-emerald-400 to-teal-500"
-          icon={<CheckIcon width={20} height={20} />}
+          icon={<Check size={20} />}
         />
         <StatCard
           label="푸는 중"
           value={stats.solvingCount}
           accent="from-sky-400 to-blue-500"
-          icon={<ListIcon width={20} height={20} />}
+          icon={<List size={20} />}
         />
 
         {/* 난이도별 진행도 */}
